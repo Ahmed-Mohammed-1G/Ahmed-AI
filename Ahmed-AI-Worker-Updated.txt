@@ -77,6 +77,8 @@ class AiError extends Error {
     this.name = "AiError";
     this.transient = transient;
     this.retryAfter = retryAfter;
+    /** @type {number | null} */
+    this.status = null;
   }
 }
 
