@@ -5,12 +5,13 @@
 // Google Drive + GitHub + Reminders + Task Management
 // ============================================================
 
-const DEFAULT_MODEL = "gemini-3.8-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 // Ordered fallback list. Override with GEMINI_MODELS (comma-separated).
 // Defaults are stable text-capable API models; premium models can be placed first
 // in GEMINI_MODELS when the Google AI project has access to them.
 const DEFAULT_GEMINI_MODELS = [
+  "gemini-2.5-flash",
   "gemini-3.8-flash",
   "gemini-3.5-flash-lite"
 ];
