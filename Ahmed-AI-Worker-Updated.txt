@@ -1,0 +1,3578 @@
+
+// ============================================================
+// AHMED AI - CLOUDFLARE WORKER
+// Telegram -> D1 -> Queue -> Gemini -> Telegram
+// Google Drive + GitHub + Reminders + Task Management
+// ============================================================
+
+const DEFAULT_MODEL = "gemini-4-neon";
+
+// Ordered fallback list. Override with GEMINI_MODELS (comma-separated).
+// Every task starts at index 0; no global pointer or persisted model state.
+const DEFAULT_GEMINI_MODELS = [
+  "gemini-4-neon",
+  "gemini-4-hydrogen",
+  "gemini-4-argon",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite"
+];
+
+const MAX_AI_ATTEMPTS = 3;
+const MAX_SEND_ATTEMPTS = 5;
+const LOCK_TIMEOUT_SECONDS = 120;
+const HISTORY_LIMIT = 12;
+const GEMINI_TIMEOUT_MS = 45000;
+const CRON_BATCH_SIZE = 20;
+
+const GOOGLE_REDIRECT_URI =
+  "https://ahmed-ai.ahmed112g334.workers.dev/oauth/callback";
+
+const GOOGLE_AUTH_URL =
+  "https://accounts.google.com/o/oauth2/v2/auth";
+
+const GOOGLE_TOKEN_URL =
+  "https://oauth2.googleapis.com/token";
+
+const GOOGLE_API =
+  "https://www.googleapis.com/drive/v3";
+
+const GOOGLE_UPLOAD_API =
+  "https://www.googleapis.com/upload/drive/v3";
+
+const GOOGLE_OAUTH_SCOPE =
+  "https://www.googleapis.com/auth/drive.file";
+
+const GOOGLE_STATE_PREFIX = "google:state:";
+const GOOGLE_TOKEN_PREFIX = "google:account";
+const DEFAULT_DRIVE_ACCOUNT = "1";
+
+const GITHUB_API = "https://api.github.com";
+
+const SYSTEM_PROMPT = [
+  "أنت Ahmed AI، مساعد شخصي ذكي على تيليجرام.",
+  "رد بنفس لغة المستخدم، وبالعامية المصرية لو كتب بها.",
+  "خلّي ردودك واضحة ومباشرة وسهلة القراءة على الموبايل.",
+  "استخدم أسلوب تقارير GitHub الجذاب والمريح على الموبايل: عنوان واضح، فواصل خفيفة، أقسام قصيرة، وتفاصيل مرتبة في سطور مستقلة. استخدم القوائم بشرطات، وأبرز اسم المشروع أو الملف أو النتيجة عند الحاجة.",
+  "خلي الأسلوب ودود وحيوي ومريح، مش رسمي زيادة ومش جاف. استخدم الإيموجي بشكل محدود وهادف كعلامات بصرية: 🟢 للنجاح، 🔴 للفشل والمشكلات، 🟡 للتأكيد أو التحذير، 🔵 للمعلومات، 📁 للملفات، 🌿 للفروع، 📝 للتغييرات، 🔗 للروابط، ⏱️ للوقت. لا تحط إيموجي في كل سطر، ولا تستخدم زخارف أو سلاسل رموز أو Markdown bold بالنجمتين. لا تدّعي أن لون النص نفسه أخضر أو أحمر؛ تيليجرام لا يدعم تلوين النص العادي.",
+  "عند التعريف بنفسك أو شرح قدراتك، قدم تعريفًا مختصرًا وجذابًا ومنظمًا، واستخدم رموزًا بسيطة عند فائدتها. لا تسرد كل الأدوات إلا لو المستخدم سأل عن إمكانياتك. خلي العامية المصرية طبيعية وقريبة.",
+  "لو مش متأكد من معلومة قول كده بصراحة ومتخترعش.",
+  "لا تطلب كلمات مرور أو بيانات بنكية أو أي معلومات حساسة.",
+  "لديك أدوات فعلية لـ Google Drive وGitHub والتذكيرات والمهام والذاكرة. استخدم الأدوات عند طلب تنفيذ أو استعلام متعلق بها، ولا تدّع تنفيذ شيء دون نتيجة أداة.",
+  "لا تخترع أسماء ملفات أو مستودعات أو نتائج. إذا كانت البيانات غير كافية فاسأل عن الناقص.",
+  "ابحث في الذاكرة المحفوظة عندما تحتاج تفضيلات أو معلومات سابقة تخص المستخدم، ولا تحفظ شيئاً إلا إذا طلب المستخدم ذلك صراحة.",
+  "التأكيد على عمليات التعديل والإنشاء والحذف يتم حصرياً من طبقة التنفيذ البرمجية: استدعِ الأداة المطلوبة مباشرة دون أن تسأل المستخدم مسبقاً هل تريد التنفيذ أو تطلب منه تأكيداً بنفسك. إذا كانت العملية تحتاج موافقة، ستعيد لك طبقة التنفيذ طلب تأكيد واحداً؛ اعرضه للمستخدم كما هو بمعنى واضح وانتظر رده. بعد موافقة المستخدم، النظام ينفذ العملية مباشرة ولا تطلب موافقة ثانية على نفس العملية. افهم الموافقة أو الإلغاء من الردود الطبيعية الواضحة مثل أكد، أيوه، موافق، كمل، نفّذ، اعملها، يلا، تمام، ماشي، وكذلك إلغاء، خلاص بلاش، متنفذش، وقف. لو الرد محتمل أو فيه تردد مثل تمام بس استنى، لا تنفذ ولا تلغِ العملية واطلب توضيحاً.",
+  "ممنوع تكرار سؤال التأكيد: لا تنشئ تأكيداً محادثياً مستقلاً قبل استدعاء الأداة، ولا تطلب تأكيداً جديداً بعد أن يوافق المستخدم على العملية المعلقة نفسها. تأكيد واحد واضح يكفي للعملية الواحدة.",
+  "عند إنشاء تذكير حوّل الوقت المحلي في مصر إلى Unix timestamp بالثواني اعتماداً على الوقت الحالي المرفق، ولا تخمّن إذا كان الموعد غامضاً.",
+  "بعد تنفيذ أي أداة، اشرح النتيجة للمستخدم بلغة طبيعية ومختصرة. لا تعرض JSON أو أسماء الأدوات أو مفاتيح البرمجة أو file IDs الخام. اذكر بوضوح هل نجحت العملية أم فشلت، وما الذي تغير، واسم الملف أو المستودع أو التذكير عند توفره. لا تقل إن العملية نجحت إذا لم تؤكد نتيجة الأداة ذلك."
+].join(" ");
+
+const now = () => Math.floor(Date.now() / 1000);
+
+// ============================================================
+// ERRORS
+// ============================================================
+
+class AiError extends Error {
+  constructor(message, transient = false, retryAfter = null) {
+    super(message);
+    this.name = "AiError";
+    this.transient = transient;
+    this.retryAfter = retryAfter;
+  }
+}
+
+class TgError extends Error {
+  constructor(message, transient = true, retryAfter = null) {
+    super(message);
+    this.name = "TgError";
+    this.transient = transient;
+    this.retryAfter = retryAfter;
+  }
+}
+
+// ============================================================
+// COMMON HELPERS
+// ============================================================
+
+function textResponse(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function readJson(request) {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+function safeString(value, max = 3000) {
+  return String(value ?? "").trim().slice(0, max);
+}
+
+function validateId(value, name = "id") {
+  const id = String(value || "").trim();
+
+  if (!id || id.length > 200) {
+    throw new Error(`Invalid ${name}`);
+  }
+
+  return id;
+}
+
+function validateAccount(account) {
+  const raw = String(account || DEFAULT_DRIVE_ACCOUNT);
+  const value = raw.replace(/^account(?=\d+$)/i, "");
+
+  if (!/^[a-zA-Z0-9_-]{1,40}$/.test(value)) {
+    throw new Error("Invalid Google Drive account name");
+  }
+
+  return value;
+}
+
+function isAuthorized(request, env) {
+  const expected =
+    env.ADMIN_API_TOKEN || env.GOOGLE_OAUTH_SETUP_TOKEN;
+
+  const provided = request.headers.get("Authorization") || "";
+
+  if (!expected || !provided.startsWith("Bearer ")) {
+    return false;
+  }
+
+  const actual = provided.slice(7);
+
+  if (actual.length !== expected.length) {
+    return false;
+  }
+
+  let mismatch = 0;
+
+  for (let i = 0; i < expected.length; i++) {
+    mismatch |= expected.charCodeAt(i) ^ actual.charCodeAt(i);
+  }
+
+  return mismatch === 0;
+}
+
+function requireAdmin(request, env) {
+  return isAuthorized(request, env);
+}
+
+function encodePath(path) {
+  return String(path || "")
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+}
+
+function base64EncodeUnicode(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+}
+
+function base64DecodeUnicode(value) {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+
+  return new TextDecoder().decode(bytes);
+}
+
+function errorMessage(error) {
+  return String(error?.message || error || "Unknown error").slice(0, 500);
+}
+
+// ============================================================
+// MAIN WORKER
+// ============================================================
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    try {
+      if (request.method === "GET" && path === "/health") {
+        await env.DB.prepare("SELECT 1").first();
+
+        return jsonResponse({
+          status: "ok",
+          database: "connected",
+          queue: Boolean(env.TASK_QUEUE),
+          timestamp: now()
+        });
+      }
+
+      if (request.method === "POST" && path === "/telegram") {
+        return await handleTelegram(request, env);
+      }
+
+      // Public GitHub webhook (authenticated by its HMAC signature).
+      if (request.method === "POST" && path === "/github/webhook") {
+        return await handleGitHubWebhook(request, env);
+      }
+
+      // Google OAuth
+      if (
+        request.method === "POST" &&
+        path === "/oauth/google/start"
+      ) {
+        return await startGoogleOAuth(request, env);
+      }
+
+      if (
+        request.method === "GET" &&
+        path === "/oauth/callback"
+      ) {
+        return await handleGoogleOAuthCallback(request, env);
+      }
+
+      // All management endpoints require admin authentication.
+      if (
+        path.startsWith("/api/") &&
+        !requireAdmin(request, env)
+      ) {
+        return jsonResponse({ error: "Forbidden" }, 403);
+      }
+
+      if (path.startsWith("/api/drive/")) {
+        return await handleDriveAPI(request, env, url);
+      }
+
+      if (path.startsWith("/api/github/")) {
+        return await handleGitHubAPI(request, env, url);
+      }
+
+      if (path === "/api/reminders" ||
+          path.startsWith("/api/reminders/")) {
+        return await handleReminderAPI(request, env, url);
+      }
+
+      if (path === "/api/tasks" ||
+          path.startsWith("/api/tasks/")) {
+        return await handleTaskAPI(request, env, url);
+      }
+
+      return textResponse("Not found", 404);
+    } catch (error) {
+      console.error("Worker request failed:", errorMessage(error));
+
+      return jsonResponse({
+        error: "Internal server error",
+        message: errorMessage(error)
+      }, 500);
+    }
+  },
+
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        const taskId = Number(message.body?.taskId);
+
+        if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+          message.ack();
+          continue;
+        }
+
+        await processQueuedTask(env, taskId);
+        message.ack();
+      } catch (error) {
+        console.error("Queue processing failed:", errorMessage(error));
+        message.retry({ delaySeconds: 120 });
+      }
+    }
+  },
+
+  async scheduled(event, env) {
+    await runRecoveryCron(env);
+  }
+};
+
+// ============================================================
+// TELEGRAM WEBHOOK
+// ============================================================
+
+async function handleTelegram(request, env) {
+  if (
+    !env.WEBHOOK_SECRET ||
+    request.headers.get("X-Telegram-Bot-Api-Secret-Token") !==
+      env.WEBHOOK_SECRET
+  ) {
+    return textResponse("Forbidden", 403);
+  }
+
+  const update = await readJson(request);
+
+  if (!update) {
+    return textResponse("Bad request", 400);
+  }
+
+  const msg = update.message;
+
+  if (
+    !Number.isSafeInteger(update.update_id) ||
+    !msg ||
+    typeof msg.text !== "string" ||
+    !msg.from ||
+    !msg.chat
+  ) {
+    return textResponse("ok");
+  }
+
+  if (String(msg.from.id) !== String(env.ALLOWED_USER_ID)) {
+    return textResponse("ok");
+  }
+
+  const command = msg.text.trim()
+    .split(/\s+/, 1)[0]
+    .split("@", 1)[0]
+    .toLowerCase();
+
+  if (command === "/start") {
+    await sendTelegram(
+      env,
+      msg.chat.id,
+      "أهلًا بيك! أنا Ahmed AI 👋\nابعتلي سؤالك أو المهمة اللي محتاج مساعدتي فيها."
+    );
+
+    return textResponse("ok");
+  }
+
+  if (!env.TASK_QUEUE) {
+    return textResponse("Queue binding missing", 503);
+  }
+
+  const t = now();
+
+  try {
+    const result = await env.DB.prepare(
+      `INSERT OR IGNORE INTO tasks
+       (update_id, chat_id, user_text, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?)`
+    ).bind(
+      update.update_id,
+      msg.chat.id,
+      msg.text,
+      t,
+      t
+    ).run();
+
+    let taskId = Number(result.meta?.last_row_id || 0);
+
+    if (result.meta?.changes === 0 || !taskId) {
+      const existing = await env.DB.prepare(
+        "SELECT id, status FROM tasks WHERE update_id=?"
+      ).bind(update.update_id).first();
+
+      if (!existing) {
+        return textResponse("Task not found", 500);
+      }
+
+      if (["pending", "generated"].includes(existing.status)) {
+        await env.TASK_QUEUE.send({
+          taskId: Number(existing.id)
+        });
+      }
+
+      return textResponse("ok");
+    }
+
+    await env.TASK_QUEUE.send({ taskId });
+
+    return textResponse("ok");
+  } catch (error) {
+    console.error("Webhook task creation failed:", errorMessage(error));
+    return textResponse("Task creation failed", 500);
+  }
+}
+
+// ============================================================
+// QUEUE PROCESSING
+// ============================================================
+
+async function processQueuedTask(env, taskId) {
+  const task = await env.DB.prepare(
+    "SELECT id, status FROM tasks WHERE id=?"
+  ).bind(taskId).first();
+
+  if (!task) return;
+
+  if (task.status === "pending") {
+    await processTask(env, taskId);
+  } else if (task.status === "generated") {
+    await sendReply(env, taskId);
+  }
+}
+
+async function processTask(env, taskId) {
+  const t = now();
+
+  const claim = await env.DB.prepare(
+    `UPDATE tasks
+     SET status='processing',
+         locked_at=?,
+         ai_attempts=COALESCE(ai_attempts, 0)+1,
+         updated_at=?
+     WHERE id=?
+       AND status='pending'
+       AND (next_retry_at IS NULL OR next_retry_at<=?)`
+  ).bind(t, t, taskId, t).run();
+
+  if (claim.meta.changes !== 1) return;
+
+  const task = await env.DB.prepare(
+    "SELECT * FROM tasks WHERE id=?"
+  ).bind(taskId).first();
+
+  if (!task) return;
+
+  let replyText;
+
+  try {
+    const history = await loadHistory(env, task.chat_id);
+
+    const confirmation = await handlePendingToolConfirmation(
+      env,
+      task.chat_id,
+      task.user_text
+    );
+
+    if (confirmation.handled) {
+      replyText = confirmation.reply;
+    } else {
+      replyText = await callGemini(
+        env,
+        history,
+        task.user_text,
+        task.chat_id
+      );
+    }
+  } catch (error) {
+    console.error("Gemini failed:", errorMessage(error));
+    await handleAiFailure(env, task, error);
+    return;
+  }
+
+  const completedAt = now();
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE tasks
+       SET status='generated',
+           reply_text=?,
+           last_error=NULL,
+           locked_at=NULL,
+           next_retry_at=NULL,
+           updated_at=?
+       WHERE id=? AND status='processing'`
+    ).bind(replyText, completedAt, taskId),
+
+    env.DB.prepare(
+      `INSERT INTO messages (chat_id, role, content, created_at)
+       VALUES (?, 'user', ?, ?)`
+    ).bind(task.chat_id, task.user_text, completedAt),
+
+    env.DB.prepare(
+      `INSERT INTO messages (chat_id, role, content, created_at)
+       VALUES (?, 'assistant', ?, ?)`
+    ).bind(task.chat_id, replyText, completedAt)
+  ]);
+
+  await sendReply(env, taskId);
+}
+
+async function loadHistory(env, chatId) {
+  const result = await env.DB.prepare(
+    `SELECT role, content
+     FROM messages
+     WHERE chat_id=?
+     ORDER BY id DESC
+     LIMIT ?`
+  ).bind(chatId, HISTORY_LIMIT).all();
+
+  return (result.results || []).reverse();
+}
+
+// ============================================================
+// GEMINI
+// ============================================================
+
+function retryDelay(error, attempt) {
+  if (
+    Number.isFinite(error?.retryAfter) &&
+    error.retryAfter > 0
+  ) {
+    return Math.min(Math.ceil(error.retryAfter), 3600);
+  }
+
+  return Math.min(
+    30 * Math.pow(2, Math.max(0, attempt - 1)),
+    600
+  ) + Math.floor(Math.random() * 6);
+}
+
+// ============================================================
+// GEMINI FUNCTION CALLING + TOOL EXECUTION
+// ============================================================
+
+const TOOL_CONFIRM_TTL = 600;
+const MAX_TOOL_ROUNDS = 5;
+
+const strParam = { type: "STRING" };
+const intParam = { type: "INTEGER" };
+const boolParam = { type: "BOOLEAN" };
+const stringArrayParam = { type: "ARRAY", items: { type: "STRING" } };
+
+const GEMINI_TOOLS = [
+  { name: "drive_accounts", description: "List connected Google Drive accounts.", parameters: { type: "OBJECT", properties: {} } },
+  { name: "drive_test", description: "Test a connected Google Drive account.", parameters: { type: "OBJECT", properties: { account: strParam } } },
+  { name: "drive_list", description: "List/search files in a connected Google Drive account. q is a Drive query, not plain keywords unless translated to Drive query syntax.", parameters: { type: "OBJECT", properties: { account: strParam, q: strParam, pageSize: intParam, pageToken: strParam } } },
+  { name: "drive_get", description: "Get Google Drive file metadata by file ID.", parameters: { type: "OBJECT", properties: { account: strParam, fileId: strParam }, required: ["fileId"] } },
+  { name: "drive_read", description: "Read text content of a Google Drive file by file ID.", parameters: { type: "OBJECT", properties: { account: strParam, fileId: strParam }, required: ["fileId"] } },
+  { name: "drive_create_folder", description: "Create a Google Drive folder. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { account: strParam, name: strParam, parentId: strParam }, required: ["name"] } },
+  { name: "drive_upload", description: "Upload text content as a file to Google Drive. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { account: strParam, name: strParam, content: strParam, mimeType: strParam, parentId: strParam }, required: ["name", "content"] } },
+  { name: "drive_update", description: "Rename or update description of a Google Drive file. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { account: strParam, fileId: strParam, name: strParam, description: strParam }, required: ["fileId"] } },
+  { name: "drive_move", description: "Move a Google Drive file to another folder. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { account: strParam, fileId: strParam, parentId: strParam }, required: ["fileId", "parentId"] } },
+  { name: "drive_delete", description: "Permanently delete a Google Drive file. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { account: strParam, fileId: strParam }, required: ["fileId"] } },
+  { name: "github_user", description: "Get authenticated GitHub user information.", parameters: { type: "OBJECT", properties: {} } },
+  { name: "github_repos", description: "List authenticated user's GitHub repositories.", parameters: { type: "OBJECT", properties: { page: intParam, per_page: intParam } } },
+  { name: "github_contents", description: "List or read repository contents. path may be empty for repository root.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, path: strParam, ref: strParam }, required: ["owner", "repo"] } },
+  { name: "github_write_file", description: "Create or update a file in a GitHub repository. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, path: strParam, content: strParam, message: strParam, branch: strParam }, required: ["owner", "repo", "path", "content", "message"] } },
+  { name: "github_delete_file", description: "Delete a file from a GitHub repository. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, path: strParam, sha: strParam, message: strParam, branch: strParam }, required: ["owner", "repo", "path"] } },
+  { name: "github_issues", description: "List issues for a GitHub repository.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam }, required: ["owner", "repo"] } },
+  { name: "github_create_issue", description: "Create a GitHub issue. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, title: strParam, body: strParam, labels: stringArrayParam }, required: ["owner", "repo", "title"] } },
+  { name: "github_update_issue", description: "Update a GitHub issue. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, issue_number: intParam, title: strParam, body: strParam, state: strParam }, required: ["owner", "repo", "issue_number"] } },
+  { name: "github_pulls", description: "List pull requests for a GitHub repository.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam }, required: ["owner", "repo"] } },
+  { name: "github_create_pull", description: "Create a GitHub pull request. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { owner: strParam, repo: strParam, title: strParam, head: strParam, base: strParam, body: strParam, draft: boolParam }, required: ["owner", "repo", "title", "head", "base"] } },
+  { name: "github_operations", description: "Show recent GitHub operations performed by Ahmed AI.", parameters: { type: "OBJECT", properties: {} } },
+  { name: "reminder_list", description: "List reminders. Optional status can be active, paused, cancelled, or completed.", parameters: { type: "OBJECT", properties: { status: strParam } } },
+  { name: "reminder_create", description: "Create a reminder. due_at must be a future Unix timestamp in seconds. recurrence: none, daily, weekly, monthly. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { text: strParam, due_at: intParam, recurrence: strParam }, required: ["text", "due_at"] } },
+  { name: "reminder_update", description: "Update a reminder. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { id: intParam, text: strParam, due_at: intParam, recurrence: strParam, status: strParam }, required: ["id"] } },
+  { name: "reminder_delete", description: "Delete a reminder. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { id: intParam }, required: ["id"] } },
+  { name: "task_list", description: "List recent Ahmed AI tasks and their statuses.", parameters: { type: "OBJECT", properties: { status: strParam, limit: intParam } } },
+  { name: "task_retry", description: "Retry a failed or pending task. The backend requests one confirmation; do not ask separately.", parameters: { type: "OBJECT", properties: { id: intParam }, required: ["id"] } },
+  { name: "memory_save", description: "Save a durable user preference or fact explicitly requested to be remembered.", parameters: { type: "OBJECT", properties: { key: strParam, value: strParam }, required: ["key", "value"] } },
+  { name: "memory_search", description: "Search saved personal memory for relevant facts.", parameters: { type: "OBJECT", properties: { query: strParam }, required: ["query"] } },
+  { name: "memory_delete", description: "Delete a saved memory by its exact key when the user asks to forget it.", parameters: { type: "OBJECT", properties: { key: strParam }, required: ["key"] } }
+];
+
+const CONFIRM_REQUIRED_TOOLS = new Set([
+  "drive_create_folder", "drive_upload", "drive_update", "drive_move", "drive_delete",
+  "github_write_file", "github_delete_file", "github_create_issue", "github_update_issue", "github_create_pull",
+  "reminder_create", "reminder_update", "reminder_delete", "task_retry",
+  "memory_save", "memory_delete"
+]);
+
+function toolConfirmationKey(chatId) {
+  return `tool:confirm:${String(chatId)}`;
+}
+
+function getGeminiModelList(env) {
+  const configured = safeString(env.GEMINI_MODELS, 1000);
+  const legacyPrimary = safeString(env.GEMINI_MODEL, 120);
+
+  const rawModels = configured
+    ? configured.split(",")
+    : legacyPrimary
+      ? [legacyPrimary, ...DEFAULT_GEMINI_MODELS]
+      : DEFAULT_GEMINI_MODELS;
+
+  const models = [...new Set(
+    rawModels
+      .map(value => String(value || "").trim().replace(/^models\//, ""))
+      .filter(Boolean)
+  )].slice(0, 8);
+
+  return models.length ? models : [DEFAULT_MODEL];
+}
+
+function retryAfterSeconds(response, fallback = 300) {
+  const value = response?.headers?.get?.("retry-after");
+  if (!value) return fallback;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(Math.ceil(seconds), 3600);
+  }
+
+  const date = Date.parse(value);
+  if (Number.isFinite(date)) {
+    const remaining = Math.ceil((date - Date.now()) / 1000);
+    if (remaining > 0) return Math.min(remaining, 3600);
+  }
+
+  return fallback;
+}
+
+async function callGemini(env, history, userText, chatId) {
+  if (!env.GEMINI_API_KEY) throw new AiError("GEMINI_API_KEY is missing", false);
+  if (!env.OAUTH_STORE) throw new AiError("OAUTH_STORE binding is missing", false);
+
+  const models = getGeminiModelList(env);
+  let toolCallsStarted = false;
+  let lastError = null;
+
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
+    const model = models[modelIndex];
+    const attempt = modelIndex + 1;
+    const contents = history.map(message => ({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: [{ text: message.content }]
+    }));
+    contents.push({ role: "user", parts: [{ text: userText }] });
+
+    try {
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+        let response, data;
+
+        try {
+          response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-goog-api-key": env.GEMINI_API_KEY
+              },
+              body: JSON.stringify({
+                systemInstruction: {
+                  parts: [{
+                    text: `${SYSTEM_PROMPT}\nCurrent Africa/Cairo date/time: ${new Intl.DateTimeFormat("en-GB", {
+                      timeZone: "Africa/Cairo",
+                      dateStyle: "full",
+                      timeStyle: "long"
+                    }).format(new Date())}. Current Unix timestamp: ${now()}.`
+                  }]
+                },
+                contents,
+                tools: [{ functionDeclarations: GEMINI_TOOLS }],
+                toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+                generationConfig: { maxOutputTokens: 2048, temperature: 0.25 }
+              }),
+              signal: controller.signal
+            }
+          );
+          data = await response.json().catch(() => null);
+        } catch (error) {
+          const timedOut = error?.name === "AbortError";
+          const failure = new AiError(
+            timedOut ? "Gemini request timed out" : "Gemini network error",
+            true
+          );
+          failure.status = null;
+          throw failure;
+        } finally {
+          clearTimeout(timer);
+        }
+
+        const apiMessage = data?.error?.message || "";
+        const modelUnavailable =
+          response.status === 404 &&
+          /(model.{0,40}(not found|not available|unavailable|not supported)|not found.{0,40}model|model.*does not exist)/i.test(apiMessage);
+
+        if (response.status === 429) {
+          const failure = new AiError(
+            `Gemini rate limit: ${apiMessage.slice(0, 180)}`,
+            true,
+            retryAfterSeconds(response, 300)
+          );
+          failure.status = 429;
+          throw failure;
+        }
+
+        if (
+          response.status === 408 ||
+          response.status === 425 ||
+          response.status >= 500 ||
+          modelUnavailable
+        ) {
+          const failure = new AiError(
+            modelUnavailable
+              ? `Gemini model unavailable (404): ${apiMessage.slice(0, 180)}`
+              : `Gemini temporary error (${response.status})`,
+            true
+          );
+          failure.status = response.status;
+          throw failure;
+        }
+
+        if (!response.ok) {
+          const failure = new AiError(
+            `Gemini error (${response.status}): ${apiMessage.slice(0, 180)}`,
+            false
+          );
+          failure.status = response.status;
+          throw failure;
+        }
+
+        if (data?.promptFeedback?.blockReason) {
+          throw new AiError(
+            `Gemini blocked request: ${data.promptFeedback.blockReason}`,
+            false
+          );
+        }
+
+        const candidate = data?.candidates?.[0];
+        const modelContent = candidate?.content;
+        const parts = modelContent?.parts || [];
+        const calls = parts.filter(part => part.functionCall?.name);
+
+        if (!calls.length) {
+          const answer = parts.map(part => part.text || "").join("").trim();
+          if (!answer) throw new AiError("Gemini returned an empty response", true);
+          return answer;
+        }
+
+        // Once a model has emitted tool calls, never replay the original prompt
+        // against another model: that could duplicate writes or pending confirmations.
+        toolCallsStarted = true;
+        contents.push(modelContent);
+        const functionResponses = [];
+
+        for (const part of calls) {
+          const call = part.functionCall;
+          let result;
+          try {
+            result = await executeGeminiTool(
+              env,
+              chatId,
+              call.name,
+              call.args || {},
+              false
+            );
+          } catch (error) {
+            result = { ok: false, error: errorMessage(error) };
+          }
+          functionResponses.push({
+            functionResponse: {
+              name: call.name,
+              response: { result }
+            }
+          });
+        }
+
+        contents.push({ role: "user", parts: functionResponses });
+      }
+
+      throw new AiError("Too many consecutive tool calls; stopped for safety.", false);
+    } catch (error) {
+      lastError = error;
+      const transient = error instanceof AiError && error.transient;
+      const hasNextModel = modelIndex < models.length - 1;
+
+      console.warn("Gemini model attempt failed", {
+        model,
+        status: Number(error?.status || 0) || null,
+        transient,
+        attempt
+      });
+
+      // Fallback is safe only before any function call was emitted/executed.
+      if (!transient || !hasNextModel || toolCallsStarted) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new AiError("All configured Gemini models failed", true);
+}
+
+function normalizeConfirmationText(value) {
+  return safeString(value, 160)
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/[ىي]/g, "ي")
+    .replace(/[ؤئ]/g, "ء")
+    .replace(/[.!؟?،,:;؛"'`()[\]{}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function classifyConfirmation(value) {
+  const text = normalizeConfirmationText(value);
+  if (!text) return "ambiguous";
+
+  const yesPhrases = [
+    "اكد", "اكدها", "تأكيد", "تأكيدها", "ايوه", "اه", "نعم",
+    "موافق", "موافقه", "نفذ", "نفذها", "نفذ الامر", "كمل",
+    "كملها", "اعملها", "يلا", "تمام", "ماشي", "توكل",
+    "توكل على الله", "yes", "yeah", "yep", "confirm",
+    "confirmed", "approved", "do it", "go ahead", "proceed"
+  ];
+
+  const noPhrases = [
+    "الغاء", "الغي", "الغ العملية", "الغى العملية", "لا",
+    "لأ", "مش موافق", "مش عايز", "خلاص بلاش", "بلاش",
+    "متنفذش", "ما تنفذش", "وقف", "cancel", "no", "nope",
+    "dont", "do not", "stop"
+  ];
+
+  const containsPhrase = phrase =>
+    text === phrase || text.startsWith(phrase + " ") || text.endsWith(" " + phrase) ||
+    text.includes(" " + phrase + " ");
+
+  const hasYes = yesPhrases.some(containsPhrase);
+  const hasNo = noPhrases.some(containsPhrase);
+
+  // Any hesitation, qualification, or mixed intent must never authorize execution.
+  const hesitation =
+    /(استنى|انتظر|بس|لكن|يمكن|مش متأكد|مش عارف|مش دلوقتي|بعد كده|بعدين|لما|لو)/.test(text);
+
+  if (hesitation || (hasYes && hasNo)) return "ambiguous";
+  if (hasNo) return "no";
+  if (hasYes) return "yes";
+
+  return "ambiguous";
+}
+
+function formatToolFailure(name, error) {
+  return `🔴 حصلت مشكلة أثناء التنفيذ\n--------------------\n${formatToolFailureBody(name, error)}`;
+}
+
+function formatToolFailureBody(name, error) {
+  const raw = errorMessage(error);
+  const status = Number(raw.match(/(?:API error|error)\s+(\d{3})/i)?.[1] || 0);
+  if (status === 401) return "❌ تعذّر الاتصال بالخدمة لأن بيانات المصادقة غير مقبولة. راجع إعدادات الربط من غير ما تبعت أي مفاتيح سرية هنا.";
+  if (status === 403) return "❌ الخدمة رفضت العملية بسبب الصلاحيات. راجع صلاحيات GitHub App أو صلاحيات الوصول للملف.";
+  if (status === 404) return "❌ مش لاقي الملف أو المستودع أو العنصر المطلوب. اتأكد من الاسم والمسار وإن التطبيق مثبت على المستودع.";
+  if (status === 409 || status === 422) return "❌ الخدمة رفضت التغيير، غالبًا بسبب تعارض في النسخة الحالية أو بيانات غير مقبولة. محتاجين نراجع تفاصيل العملية قبل إعادة المحاولة.";
+  if (/GITHUB_APP|GITHUB_INSTALLATION|GITHUB_PRIVATE_KEY/i.test(raw)) return "❌ إعدادات GitHub App مش مكتملة أو المفتاح غير مقروء. راجع أسماء المتغيرات والمفتاح الكامل في Cloudflare.";
+  if (/Google|Drive|google/i.test(raw)) return "❌ حصلت مشكلة أثناء الاتصال بـ Google Drive. راجع اتصال الحساب وصلاحياته، وبعدها جرّب تاني.";
+  if (/GitHub|github/i.test(raw)) return "❌ حصلت مشكلة أثناء تنفيذ العملية على GitHub. راجع صلاحيات التطبيق والمستودع، وبعدها جرّب تاني.";
+  if (/not found|does not exist/i.test(raw)) return "❌ العنصر المطلوب مش موجود أو مش متاح للحساب المتصل.";
+  if (/timeout|timed out|network|fetch failed/i.test(raw)) return "❌ الاتصال اتأخر أو انقطع قبل اكتمال العملية. مفيش تأكيد إن التغيير تم؛ افحص الحالة قبل إعادة المحاولة.";
+  return `❌ مقدرتش أكمل العملية. التفاصيل: ${safeString(raw, 220)}`;
+}
+
+async function handlePendingToolConfirmation(env, chatId, userText) {
+  if (!env.OAUTH_STORE) return { handled: false };
+  const key = toolConfirmationKey(chatId);
+  const pending = await env.OAUTH_STORE.get(key, "json");
+  if (!pending) return { handled: false };
+
+  const decision = classifyConfirmation(userText);
+  if (decision === "ambiguous") {
+    return {
+      handled: true,
+      reply: "🟡 العملية مستنية تأكيدك\n--------------------\nلو عايز أنفذها قول «أكد» أو «نفّذ»، ولو عايز تلغيها قول «إلغاء». ولو قصدك حاجة تانية وضّحلي."
+    };
+  }
+
+  await env.OAUTH_STORE.delete(key);
+  if (decision === "no") {
+    return { handled: true, reply: "🟡 تم إلغاء العملية\n--------------------\nمفيش أي تغيير اتنفذ." };
+  }
+
+  try {
+    const result = await executeGeminiTool(env, chatId, pending.name, pending.args, true);
+    return { handled: true, reply: formatToolResult(pending.name, result, pending.args) };
+  } catch (error) {
+    return { handled: true, reply: formatToolFailure(pending.name, error) };
+  }
+}
+
+async function executeGeminiTool(env, chatId, name, args, confirmed) {
+  if (!GEMINI_TOOLS.some(tool => tool.name === name)) {
+    throw new Error(`Unknown tool: ${name}`);
+  }
+
+  if (CONFIRM_REQUIRED_TOOLS.has(name) && !confirmed) {
+    const key = toolConfirmationKey(chatId);
+    const existing = await env.OAUTH_STORE.get(key, "json");
+    if (existing) {
+      return { needs_confirmation: true, message: "There is already a pending operation. Ask the user to confirm or cancel it first." };
+    }
+    await env.OAUTH_STORE.put(key, JSON.stringify({ name, args, created_at: now() }), { expirationTtl: TOOL_CONFIRM_TTL });
+    return { needs_confirmation: true, message: `Operation ${name} is waiting for explicit user confirmation. No action has been executed. Show this single confirmation request to the user and wait for the reply; do not ask for another confirmation.` };
+  }
+
+  const a = args || {};
+  if (name.startsWith("drive_")) return await executeDriveTool(env, name, a);
+  if (name.startsWith("github_")) return await executeGitHubTool(env, name, a);
+  if (name.startsWith("reminder_")) return await executeReminderTool(env, name, a, chatId);
+  if (name.startsWith("task_")) return await executeTaskTool(env, name, a);
+  if (name.startsWith("memory_")) return await executeMemoryTool(env, chatId, name, a);
+  throw new Error("Unsupported tool");
+}
+
+async function callInternalApi(handler, env, path, method = "GET", params = {}, body = null) {
+  const url = new URL(`https://internal.local${path}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  const request = new Request(url.toString(), {
+    method,
+    headers: body === null ? {} : { "content-type": "application/json" },
+    body: body === null ? undefined : JSON.stringify(body)
+  });
+  const response = await handler(request, env, url);
+  const text = await response.text();
+  let parsed;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { text }; }
+  if (!response.ok) throw new Error(parsed?.error || parsed?.message || `Internal API failed (${response.status})`);
+  return parsed;
+}
+
+async function executeDriveTool(env, name, a) {
+  const account = validateAccount(a.account || DEFAULT_DRIVE_ACCOUNT);
+  if (name === "drive_accounts") {
+    const result = await env.DB.prepare("SELECT account_name, status, root_folder_id FROM storage_accounts WHERE provider='google_drive' ORDER BY id").all();
+    return { accounts: result.results || [] };
+  }
+  if (name === "drive_test") return await callInternalApi(handleDriveAPI, env, "/api/drive/test", "GET", { account });
+  if (name === "drive_list") return await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: a.q || "trashed = false", pageSize: a.pageSize || 20, pageToken: a.pageToken });
+  if (name === "drive_get") return await callInternalApi(handleDriveAPI, env, "/api/drive/get", "GET", { account, fileId: validateId(a.fileId, "fileId") });
+  if (name === "drive_read") return await callInternalApi(handleDriveAPI, env, "/api/drive/read", "GET", { account, fileId: validateId(a.fileId, "fileId") });
+  if (name === "drive_create_folder") return await callInternalApi(handleDriveAPI, env, "/api/drive/create-folder", "POST", { account }, { name: safeString(a.name, 200), parentId: a.parentId || undefined });
+  if (name === "drive_upload") return await callInternalApi(handleDriveAPI, env, "/api/drive/upload", "POST", { account }, { name: safeString(a.name, 200), content: String(a.content ?? ""), mimeType: a.mimeType || "text/plain", parentId: a.parentId || undefined });
+  if (name === "drive_update") return await callInternalApi(handleDriveAPI, env, "/api/drive/update", "PATCH", { account }, { fileId: validateId(a.fileId, "fileId"), name: a.name, description: a.description });
+  if (name === "drive_move") return await callInternalApi(handleDriveAPI, env, "/api/drive/move", "POST", { account }, { fileId: validateId(a.fileId, "fileId"), parentId: validateId(a.parentId, "parentId") });
+  if (name === "drive_delete") {
+    const fileId = validateId(a.fileId, "fileId");
+    const metadata = await callInternalApi(handleDriveAPI, env, "/api/drive/get", "GET", { account, fileId });
+    const deleted = await callInternalApi(handleDriveAPI, env, "/api/drive/delete", "POST", { account }, { fileId, confirm: true });
+    return { ...deleted, name: metadata?.name || "" };
+  }
+  throw new Error("Unknown Drive tool");
+}
+
+async function executeGitHubTool(env, name, a) {
+  if (name === "github_user") return await callInternalApi(handleGitHubAPI, env, "/api/github/user");
+  if (name === "github_repos") return await callInternalApi(handleGitHubAPI, env, "/api/github/repos", "GET", { page: a.page || 1, per_page: a.per_page || 30 });
+  if (name === "github_contents") return await callInternalApi(handleGitHubAPI, env, "/api/github/contents", "GET", { owner: validateId(a.owner, "owner"), repo: validateId(a.repo, "repo"), path: a.path || "", ref: a.ref });
+  if (name === "github_write_file") return await callInternalApi(handleGitHubAPI, env, "/api/github/write-file", "PUT", {}, { ...a, owner: validateId(a.owner, "owner"), repo: validateId(a.repo, "repo"), path: validateId(a.path, "path") });
+  if (name === "github_delete_file") {
+    const { owner, repo, path } = a;
+    const existing = await githubRequest(env, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`);
+    const deleted = await callInternalApi(handleGitHubAPI, env, "/api/github/delete-file", "POST", {}, { ...a, sha: a.sha || existing.sha, confirm: true });
+    return { deleted: true, name: existing.name || path, repository: `${owner}/${repo}`, commit_url: deleted?.commit?.html_url || null };
+
+  }
+  if (name === "github_issues") return await callInternalApi(handleGitHubAPI, env, "/api/github/issues", "GET", { owner: a.owner, repo: a.repo });
+  if (name === "github_create_issue") return await callInternalApi(handleGitHubAPI, env, "/api/github/create-issue", "POST", {}, a);
+  if (name === "github_update_issue") return await callInternalApi(handleGitHubAPI, env, "/api/github/update-issue", "PATCH", {}, a);
+  if (name === "github_pulls") return await callInternalApi(handleGitHubAPI, env, "/api/github/pulls", "GET", { owner: a.owner, repo: a.repo });
+  if (name === "github_create_pull") return await callInternalApi(handleGitHubAPI, env, "/api/github/create-pull", "POST", {}, a);
+  if (name === "github_operations") {
+    const result = await env.DB.prepare("SELECT id, operation, repository, status, details, created_at FROM github_operations ORDER BY id DESC LIMIT 100").all();
+    return { operations: result.results || [] };
+  }
+  throw new Error("Unknown GitHub tool");
+}
+
+async function executeReminderTool(env, name, a, chatId) {
+  if (name === "reminder_list") return await callInternalApi(handleReminderAPI, env, "/api/reminders", "GET", { status: a.status });
+  if (name === "reminder_create") return await callInternalApi(handleReminderAPI, env, "/api/reminders", "POST", {}, { text: safeString(a.text, 3000), due_at: Number(a.due_at), recurrence: a.recurrence || "none", chat_id: String(chatId) });
+  if (name === "reminder_update") return await callInternalApi(handleReminderAPI, env, `/api/reminders/${Number(a.id)}`, "PATCH", {}, { text: a.text, due_at: a.due_at, recurrence: a.recurrence, status: a.status });
+  if (name === "reminder_delete") return await callInternalApi(handleReminderAPI, env, `/api/reminders/${Number(a.id)}`, "DELETE", {}, { confirm: true });
+  throw new Error("Unknown reminder tool");
+}
+
+async function executeTaskTool(env, name, a) {
+  if (name === "task_list") {
+    const limit = Math.min(100, Math.max(1, Number(a.limit || 30)));
+    let result;
+    if (a.status) result = await env.DB.prepare("SELECT id, user_text, reply_text, status, ai_attempts, send_attempts, last_error, created_at, updated_at FROM tasks WHERE status=? ORDER BY id DESC LIMIT ?").bind(a.status, limit).all();
+    else result = await env.DB.prepare("SELECT id, user_text, reply_text, status, ai_attempts, send_attempts, last_error, created_at, updated_at FROM tasks ORDER BY id DESC LIMIT ?").bind(limit).all();
+    return { tasks: result.results || [] };
+  }
+  if (name === "task_retry") {
+    if (!env.TASK_QUEUE) throw new Error("Queue binding missing");
+    const id = Number(a.id);
+    const result = await env.DB.prepare("UPDATE tasks SET status='pending', ai_attempts=0, send_attempts=0, locked_at=NULL, next_retry_at=NULL, last_error=NULL, failure_notified_at=NULL, updated_at=? WHERE id=? AND status IN ('failed','pending')").bind(now(), id).run();
+    if (result.meta.changes !== 1) throw new Error("Task not found or cannot be retried");
+    await env.TASK_QUEUE.send({ taskId: id });
+    return { queued: true, taskId: id };
+  }
+  throw new Error("Unknown task tool");
+}
+
+async function executeMemoryTool(env, chatId, name, a) {
+  const prefix = `memory:${String(chatId)}:`;
+  if (name === "memory_save") {
+    const key = safeString(a.key, 100).toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    if (!key) throw new Error("Memory key is invalid");
+    await env.OAUTH_STORE.put(prefix + key, JSON.stringify({ key, value: safeString(a.value, 2000), updated_at: now() }));
+    return { saved: true, key };
+  }
+  if (name === "memory_search") {
+    const listed = await env.OAUTH_STORE.list({ prefix });
+    const query = safeString(a.query, 200).toLowerCase();
+    const memories = [];
+    for (const item of listed.keys || []) {
+      const value = await env.OAUTH_STORE.get(item.name, "json");
+      if (value && `${value.key} ${value.value}`.toLowerCase().includes(query)) memories.push(value);
+    }
+    return { memories: memories.slice(0, 30) };
+  }
+  if (name === "memory_delete") {
+    const key = safeString(a.key, 100).toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    if (!key) throw new Error("Memory key is invalid");
+    await env.OAUTH_STORE.delete(prefix + key);
+    return { deleted: true, key };
+  }
+  throw new Error("Unknown memory tool");
+}
+
+function formatToolResult(name, result, args = {}) {
+  const body = formatToolResultBody(name, result, args);
+  if (result?.needs_confirmation) return `🟡 محتاج تأكيدك\n--------------------\n${body}`;
+  if (result?.ok === false || result?.error) return `🔴 العملية ما نجحتش\n--------------------\n${body}`;
+  return `🟢 تمت العملية بنجاح\n--------------------\n${body}`;
+}
+
+function formatToolResultBody(name, result, args = {}) {
+  if (result?.needs_confirmation) {
+    return `العملية محتاجة تأكيدك قبل التنفيذ. ${result.message || "رد بكلمة أكد أو إلغاء."}`;
+  }
+
+  if (result?.ok === false || result?.error) {
+    return `النتيجة: فشل التنفيذ\nالسبب: ${safeString(result.error || "حصل خطأ غير معروف", 700)}`;
+  }
+
+  const fileName = safeString(result?.name || result?.content?.name || result?.file?.name || args.name || args.path || "", 220);
+  const repo = [args.owner, args.repo].filter(Boolean).join("/");
+  const link = result?.html_url || result?.content?.html_url || result?.commit_url || result?.url || result?.webViewLink || result?.file?.webViewLink;
+  const withLink = message => link ? `${message}\n🔗 ${link}` : message;
+
+  switch (name) {
+    case "drive_create_folder":
+      return withLink(`تم إنشاء المجلد${fileName ? ` «${fileName}»` : ""} في Google Drive بنجاح.`);
+    case "drive_upload":
+      return withLink(`تم رفع الملف${fileName ? ` «${fileName}»` : ""} إلى Google Drive بنجاح.`);
+    case "drive_update":
+      return withLink(`تم تحديث بيانات الملف${fileName ? ` «${fileName}»` : ""} في Google Drive بنجاح.`);
+    case "drive_move":
+      return `تم نقل الملف${fileName ? ` «${fileName}»` : ""} إلى المجلد المطلوب في Google Drive بنجاح.`;
+    case "drive_delete":
+      return `تم حذف الملف${fileName ? ` «${fileName}»` : ""} من Google Drive بنجاح.`;
+    case "github_write_file":
+      return withLink(`تم حفظ الملف «${fileName || "الملف المطلوب"}» في مستودع GitHub${repo ? ` (${repo})` : ""}، وإنشاء Commit بنجاح.`);
+    case "github_delete_file":
+      return withLink(`تم حذف الملف «${fileName || "الملف المطلوب"}» من مستودع GitHub${repo ? ` (${repo})` : ""} وإنشاء Commit بالحذف.`);
+    case "github_create_issue":
+      return withLink(`تم إنشاء Issue${result?.number ? ` رقم ${result.number}` : ""} في ${repo || "المستودع"}${result?.title ? ` بعنوان «${safeString(result.title, 180)}»` : ""}.`);
+    case "github_update_issue":
+      return withLink(`تم تحديث Issue رقم ${args.issue_number || result?.number || "المطلوبة"} في ${repo || "المستودع"} بنجاح.`);
+    case "github_create_pull":
+      return withLink(`تم إنشاء Pull Request${result?.number ? ` رقم ${result.number}` : ""} في ${repo || "المستودع"}${result?.title ? ` بعنوان «${safeString(result.title, 180)}»` : ""}.`);
+    case "reminder_create":
+      return `تم إنشاء التذكير${result?.text || args.text ? `: «${safeString(result?.text || args.text, 250)}»` : ""} بنجاح.`;
+    case "reminder_update":
+      return `تم تحديث التذكير رقم ${args.id || result?.id || "المطلوب"} بنجاح.`;
+    case "reminder_delete":
+      return `تم حذف التذكير رقم ${args.id || result?.id || "المطلوب"} بنجاح.`;
+    case "task_retry":
+      return `تمت إعادة إرسال المهمة رقم ${result?.taskId || args.id || "المطلوبة"} إلى قائمة التنفيذ.`;
+    case "memory_save":
+      return `تم حفظ المعلومة في الذاكرة بنجاح.`;
+    case "memory_delete":
+      return `تم حذف المعلومة المطلوبة من الذاكرة.`;
+    default:
+      break;
+  }
+
+  if (name === "drive_test") return "الحالة: الاتصال بـ Google Drive يعمل بنجاح.";
+  if (name === "github_user") {
+    const login = result?.login || result?.account?.login;
+    return `الحالة: الاتصال بـ GitHub يعمل${login ? `\nالحساب المتصل: ${login}` : ""}.`;
+  }
+  if (name === "drive_read") {
+    const content = result?.content || result?.text || result?.data;
+    return typeof content === "string" ? `📄 محتوى الملف:\n${content.slice(0, 10000)}` : "✅ تم جلب محتوى الملف.";
+  }
+  if (name === "drive_accounts") {
+    const items = result?.accounts || [];
+    return items.length ? `حسابات Google Drive المتاحة:\n${items.map(x => `- ${x.account_name} — ${x.status || "غير محدد"}`).join("\n")}` : "مفيش حسابات Google Drive مسجلة حاليًا.";
+  }
+  if (name === "drive_list") {
+    const items = result?.files || [];
+    return items.length ? `لقيت ${items.length} ملف/مجلد في Google Drive:\n${items.slice(0, 20).map(x => `- ${x.name || "بدون اسم"}${x.mimeType === "application/vnd.google-apps.folder" ? " (مجلد)" : ""}`).join("\n")}` : "ملقتش ملفات مطابقة للبحث في Google Drive.";
+  }
+  if (name === "github_repos") {
+    const items = result?.repositories || [];
+    return items.length ? `لقيت ${items.length} مستودع في GitHub:\n${items.slice(0, 30).map(x => `- ${x.full_name || x.name}`).join("\n")}` : "مفيش مستودعات ظاهرة في النتيجة.";
+  }
+  if (name === "github_contents") {
+    if (Array.isArray(result)) return result.length ? `محتويات المسار في ${repo || "المستودع"}:\n${result.slice(0, 50).map(x => `- ${x.name} (${x.type === "dir" ? "مجلد" : "ملف"})`).join("\n")}` : "المسار ده فاضي.";
+    if (typeof result?.content === "string") return `📄 محتوى الملف ${result.name || args.path || "المطلوب"}:\n${base64DecodeUnicode(result.content.replace(/\s/g, "")).slice(0, 10000)}`;
+    return "✅ تم جلب محتويات المستودع.";
+  }
+  if (name === "github_issues") {
+    const items = result?.issues || [];
+    return items.length ? `عدد الـ Issues: ${items.length}\n${items.slice(0, 20).map(x => `- #${x.number} — ${x.title} (${x.state})`).join("\n")}` : "مفيش Issues في المستودع ده.";
+  }
+  if (name === "github_pulls") {
+    const items = result?.pull_requests || [];
+    return items.length ? `عدد طلبات الدمج: ${items.length}\n${items.slice(0, 20).map(x => `- #${x.number} — ${x.title} (${x.state})`).join("\n")}` : "مفيش Pull Requests في المستودع ده.";
+  }
+  if (name === "github_operations") {
+    const items = result?.operations || [];
+    return items.length ? `آخر عمليات GitHub:\n${items.slice(0, 20).map(x => `• ${x.operation} — ${x.repository || "مستودع غير محدد"} — ${x.status}`).join("\n")}` : "لسه مفيش عمليات GitHub مسجلة.";
+  }
+  if (name === "task_list") {
+    const items = result?.tasks || [];
+    return items.length ? `لقيت ${items.length} مهمة:\n${items.slice(0, 20).map(x => `- #${x.id} — ${x.status} — ${safeString(x.user_text, 120)}`).join("\n")}` : "مفيش مهام مطابقة.";
+  }
+  if (name === "reminder_list") {
+    const items = result?.reminders || [];
+    return items.length ? `التذكيرات:\n${items.slice(0, 30).map(x => `- ${x.text || "بدون عنوان"} — ${x.status || "نشط"}`).join("\n")}` : "مفيش تذكيرات مطابقة.";
+  }
+  if (name === "memory_search") {
+    const items = result?.memories || [];
+    return items.length ? `لقيت ${items.length} معلومة محفوظة:\n${items.slice(0, 20).map(x => `- ${x.key}: ${x.value}`).join("\n")}` : "ملقتش معلومات محفوظة مطابقة.";
+  }
+
+  if (result === null || result === undefined) return "✅ تم تنفيذ العملية بنجاح.";
+  if (typeof result === "string") return result.slice(0, 10000);
+  if (Array.isArray(result)) return result.length ? `تم جلب ${result.length} نتيجة.` : "مفيش نتائج.";
+  if (result.success === true || result.deleted === true || result.created === true || result.updated === true) {
+    return "✅ تم تنفيذ العملية بنجاح.";
+  }
+  const useful = [result.message, result.name, result.title, result.status].filter(Boolean).map(x => safeString(x, 300));
+  return useful.length ? `✅ تمت العملية.\n${useful.join("\n")}` : "✅ تمت العملية بنجاح.";
+}
+
+async function handleAiFailure(env, task, error) {
+  const t = now();
+  const message = errorMessage(error);
+  const transient =
+    error instanceof AiError ? error.transient : true;
+
+  const attempts = Number(task.ai_attempts || 0);
+
+  if (transient && attempts < MAX_AI_ATTEMPTS) {
+    await env.DB.prepare(
+      `UPDATE tasks
+       SET status='pending',
+           last_error=?,
+           locked_at=NULL,
+           next_retry_at=?,
+           updated_at=?
+       WHERE id=? AND status='processing'`
+    ).bind(
+      message,
+      t + retryDelay(error, attempts),
+      t,
+      task.id
+    ).run();
+
+    return;
+  }
+
+  await env.DB.prepare(
+    `UPDATE tasks
+     SET status='failed',
+         last_error=?,
+         locked_at=NULL,
+         next_retry_at=NULL,
+         updated_at=?
+     WHERE id=? AND status='processing'`
+  ).bind(message, t, task.id).run();
+
+  await notifyFailure(env, task.id);
+}
+
+// ============================================================
+// TELEGRAM DELIVERY
+// ============================================================
+
+async function sendTelegram(env, chatId, messageText) {
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    throw new TgError("TELEGRAM_BOT_TOKEN is missing", false);
+  }
+
+  const chunks = [];
+
+  for (let i = 0; i < messageText.length; i += 3900) {
+    chunks.push(messageText.slice(i, i + 3900));
+  }
+
+  if (!chunks.length) {
+    chunks.push("(رد فاضي)");
+  }
+
+  for (const chunk of chunks) {
+    let response;
+
+    try {
+      response = await fetch(
+        `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: chunk
+          })
+        }
+      );
+    } catch {
+      throw new TgError("Telegram network error", true);
+    }
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok || !result?.ok) {
+      const code = Number(
+        result?.error_code || response.status
+      );
+
+      const retryAfter =
+        Number(result?.parameters?.retry_after || 0) || null;
+
+      throw new TgError(
+        `Telegram error ${code}: ${result?.description || "send failed"}`,
+        code === 429 || code >= 500,
+        retryAfter
+      );
+    }
+  }
+}
+
+async function sendReply(env, taskId) {
+  const t = now();
+
+  const claim = await env.DB.prepare(
+    `UPDATE tasks
+     SET locked_at=?,
+         send_attempts=COALESCE(send_attempts, 0)+1,
+         updated_at=?
+     WHERE id=?
+       AND status='generated'
+       AND (locked_at IS NULL OR locked_at<?)
+       AND (next_retry_at IS NULL OR next_retry_at<=?)`
+  ).bind(
+    t,
+    t,
+    taskId,
+    t - LOCK_TIMEOUT_SECONDS,
+    t
+  ).run();
+
+  if (claim.meta.changes !== 1) return;
+
+  const task = await env.DB.prepare(
+    "SELECT * FROM tasks WHERE id=?"
+  ).bind(taskId).first();
+
+  if (!task) return;
+
+  try {
+    await sendTelegram(
+      env,
+      task.chat_id,
+      task.reply_text || "(رد فاضي)"
+    );
+
+    await env.DB.prepare(
+      `UPDATE tasks
+       SET status='sent',
+           locked_at=NULL,
+           next_retry_at=NULL,
+           last_error=NULL,
+           updated_at=?
+       WHERE id=? AND status='generated'`
+    ).bind(now(), taskId).run();
+  } catch (error) {
+    const t2 = now();
+
+    const attempts = Number(task.send_attempts || 0);
+
+    const transient =
+      error instanceof TgError ? error.transient : true;
+
+    if (transient && attempts < MAX_SEND_ATTEMPTS) {
+      await env.DB.prepare(
+        `UPDATE tasks
+         SET last_error=?,
+             locked_at=NULL,
+             next_retry_at=?,
+             updated_at=?
+         WHERE id=? AND status='generated'`
+      ).bind(
+        errorMessage(error),
+        t2 + retryDelay(error, attempts),
+        t2,
+        taskId
+      ).run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE tasks
+         SET status='failed',
+             last_error=?,
+             locked_at=NULL,
+             next_retry_at=NULL,
+             updated_at=?
+         WHERE id=? AND status='generated'`
+      ).bind(
+        errorMessage(error),
+        t2,
+        taskId
+      ).run();
+
+      await notifyFailure(env, taskId);
+    }
+  }
+}
+
+async function notifyFailure(env, taskId) {
+  const task = await env.DB.prepare(
+    `SELECT id, chat_id, last_error, failure_notified_at
+     FROM tasks
+     WHERE id=? AND status='failed'`
+  ).bind(taskId).first();
+
+  if (!task || task.failure_notified_at != null) return;
+
+  try {
+    await sendTelegram(
+      env,
+      task.chat_id,
+      `⚠️ لم أستطع إكمال المهمة رقم ${task.id}.\nالسبب: ${task.last_error || "خطأ غير محدد"}`
+    );
+
+    await env.DB.prepare(
+      `UPDATE tasks
+       SET failure_notified_at=?, updated_at=?
+       WHERE id=? AND failure_notified_at IS NULL`
+    ).bind(now(), now(), taskId).run();
+  } catch (error) {
+    console.error(
+      "Failure notification failed:",
+      errorMessage(error)
+    );
+  }
+}
+
+// ============================================================
+// GITHUB PUSH WEBHOOK
+// ============================================================
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function verifyGitHubSignature(rawBody, signatureHeader, secret) {
+  if (!signatureHeader || !/^sha256=[a-f0-9]{64}$/i.test(signatureHeader)) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+  const expected = `sha256=${bytesToHex(new Uint8Array(digest))}`;
+  const actualBytes = new TextEncoder().encode(signatureHeader.toLowerCase());
+  const expectedBytes = new TextEncoder().encode(expected);
+  if (actualBytes.length !== expectedBytes.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < actualBytes.length; i++) mismatch |= actualBytes[i] ^ expectedBytes[i];
+  return mismatch === 0;
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function formatGitHubPushMessage(payload) {
+  const repo = payload.repository || {};
+  const repoName = repo.full_name || repo.name || "مستودع غير معروف";
+  const branch = String(payload.ref || "").replace(/^refs\/heads\//, "") || "غير معروف";
+  const commits = Array.isArray(payload.commits) ? payload.commits : [];
+  const pusher = payload.pusher?.name || payload.sender?.login || "غير معروف";
+  const date = new Intl.DateTimeFormat("ar-EG", {
+    timeZone: "Africa/Cairo",
+    dateStyle: "full",
+    timeStyle: "short"
+  }).format(new Date());
+
+  const lines = [
+    "🚀 تحديث جديد على GitHub",
+    "--------------------",
+    `📦 المستودع: ${repoName}`,
+    `🌿 الفرع: ${branch}`,
+    `👤 منفذ التحديث: ${pusher}`,
+    `🕒 التوقيت: ${date}`,
+    `📝 عدد Commits: ${commits.length}`
+  ];
+
+  for (const [index, commit] of commits.slice(0, 15).entries()) {
+    const author = commit.author?.name || "غير معروف";
+    const committer = commit.committer?.name || "غير معروف";
+    const message = String(commit.message || "بدون رسالة").split("\n")[0].slice(0, 220);
+    const added = Array.isArray(commit.added) ? commit.added : [];
+    const modified = Array.isArray(commit.modified) ? commit.modified : [];
+    const removed = Array.isArray(commit.removed) ? commit.removed : [];
+    lines.push(
+      "",
+      `📌 Commit ${index + 1}: ${message}`,
+      `الكاتب: ${author}`,
+      `ملخص الملفات: +${added.length} جديد، ~${modified.length} تعديل، -${removed.length} حذف`
+    );
+    for (const [label, files] of [["ملفات جديدة", added], ["ملفات معدّلة", modified], ["ملفات محذوفة", removed]]) {
+      if (!files.length) continue;
+      lines.push(`${label}:`);
+      for (const file of files.slice(0, 8)) lines.push(`- ${String(file).slice(0, 180)}`);
+    }
+    if (commit.url) lines.push(`🔗 رابط Commit: ${commit.url}`);
+  }
+
+  if (commits.length > 15) lines.push(`يوجد ${commits.length - 15} Commit إضافي.`);
+  if (payload.compare) lines.push(`📊 مقارنة التغييرات: ${payload.compare}`);
+  else if (repo.html_url) lines.push(`🔗 رابط المستودع: ${repo.html_url}`);
+  return lines.join("\n");
+}
+
+async function handleGitHubWebhook(request, env) {
+  if (!env.GITHUB_WEBHOOK_SECRET || !env.OAUTH_STORE || !env.ALLOWED_USER_ID) {
+    return textResponse("GitHub webhook configuration missing", 503);
+  }
+
+  const rawBody = await request.text();
+  if (rawBody.length > 1_000_000) return textResponse("Payload too large", 413);
+
+  const valid = await verifyGitHubSignature(
+    rawBody,
+    request.headers.get("X-Hub-Signature-256"),
+    env.GITHUB_WEBHOOK_SECRET
+  );
+  if (!valid) return textResponse("Invalid signature", 401);
+
+  const event = request.headers.get("X-GitHub-Event") || "";
+  const delivery = request.headers.get("X-GitHub-Delivery") || "";
+  if (event !== "push") return jsonResponse({ ok: true, ignored: event || "unknown" });
+  if (!delivery || delivery.length > 200) return textResponse("Missing delivery id", 400);
+
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return textResponse("Invalid JSON", 400);
+  }
+
+  const key = `github:webhook:delivery:${delivery}`;
+  const alreadySeen = await env.OAUTH_STORE.get(key);
+  if (alreadySeen) return jsonResponse({ ok: true, duplicate: true });
+
+  const repoName = payload.repository?.full_name || payload.repository?.name || "unknown";
+  const pushIdentity = [repoName, payload.ref || "", payload.after || ""].join(":");
+  const pushKey = payload.after
+    ? `github:webhook:push:${await sha256Hex(pushIdentity)}`
+    : null;
+  if (pushKey && await env.OAUTH_STORE.get(pushKey)) {
+    await env.OAUTH_STORE.put(key, "duplicate", { expirationTtl: 30 * 24 * 60 * 60 });
+    return jsonResponse({ ok: true, duplicate: true });
+  }
+
+  await env.OAUTH_STORE.put(key, "sending", { expirationTtl: 30 * 24 * 60 * 60 });
+  if (pushKey) await env.OAUTH_STORE.put(pushKey, "sending", { expirationTtl: 30 * 24 * 60 * 60 });
+  try {
+    await sendTelegram(env, env.ALLOWED_USER_ID, formatGitHubPushMessage(payload));
+    await env.OAUTH_STORE.put(key, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
+    if (pushKey) await env.OAUTH_STORE.put(pushKey, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
+    return jsonResponse({ ok: true, notified: true });
+  } catch (error) {
+    await env.OAUTH_STORE.delete(key);
+    if (pushKey) await env.OAUTH_STORE.delete(pushKey);
+    console.error("GitHub webhook Telegram delivery failed:", errorMessage(error));
+    return textResponse("Notification delivery failed", 502);
+  }
+}
+
+// ============================================================
+// GOOGLE OAUTH
+// ============================================================
+
+function randomBase64Url(byteLength = 32) {
+  const bytes = crypto.getRandomValues(
+    new Uint8Array(byteLength)
+  );
+
+  let binary = "";
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function sha256Base64Url(value) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value)
+  );
+
+  let binary = "";
+
+  for (const byte of new Uint8Array(digest)) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function googleTokenKey(account) {
+  return `${GOOGLE_TOKEN_PREFIX}${account}:oauth`;
+}
+
+async function startGoogleOAuth(request, env) {
+  if (!isAuthorized(request, env)) {
+    return textResponse("Forbidden", 403);
+  }
+
+  if (
+    !env.GOOGLE_CLIENT_ID ||
+    !env.GOOGLE_CLIENT_SECRET ||
+    !env.OAUTH_STORE
+  ) {
+    return textResponse(
+      "Google OAuth configuration missing",
+      503
+    );
+  }
+
+  const body = await readJson(request) || {};
+
+  const account = validateAccount(
+    body.account || DEFAULT_DRIVE_ACCOUNT
+  );
+
+  const state = randomBase64Url();
+  const verifier = randomBase64Url();
+  const challenge = await sha256Base64Url(verifier);
+
+  await env.OAUTH_STORE.put(
+    GOOGLE_STATE_PREFIX + state,
+    JSON.stringify({
+      verifier,
+      account,
+      created_at: now()
+    }),
+    { expirationTtl: 600 }
+  );
+
+  const authUrl = new URL(GOOGLE_AUTH_URL);
+
+  authUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", GOOGLE_OAUTH_SCOPE);
+  authUrl.searchParams.set("access_type", "offline");
+  authUrl.searchParams.set("prompt", "consent");
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("code_challenge", challenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+
+  return jsonResponse({
+    account,
+    authorization_url: authUrl.toString(),
+    expires_in: 600
+  });
+}
+
+async function handleGoogleOAuthCallback(request, env) {
+  if (
+    !env.OAUTH_STORE ||
+    !env.GOOGLE_CLIENT_ID ||
+    !env.GOOGLE_CLIENT_SECRET
+  ) {
+    return textResponse("OAuth configuration missing", 503);
+  }
+
+  const url = new URL(request.url);
+
+  if (url.searchParams.has("error")) {
+    return textResponse(
+      "Google authorization was not completed.",
+      400
+    );
+  }
+
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state || state.length > 256) {
+    return textResponse("Invalid OAuth callback", 400);
+  }
+
+  const stateKey = GOOGLE_STATE_PREFIX + state;
+
+  const storedState = await env.OAUTH_STORE.get(
+    stateKey,
+    "json"
+  );
+
+  await env.OAUTH_STORE.delete(stateKey);
+
+  if (
+    !storedState ||
+    typeof storedState.verifier !== "string" ||
+    now() - storedState.created_at > 600
+  ) {
+    return textResponse("Invalid or expired OAuth state", 400);
+  }
+
+  const account = validateAccount(storedState.account);
+
+  const body = new URLSearchParams({
+    code,
+    client_id: env.GOOGLE_CLIENT_ID,
+    client_secret: env.GOOGLE_CLIENT_SECRET,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    grant_type: "authorization_code",
+    code_verifier: storedState.verifier
+  });
+
+  const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+
+  const tokenData = await tokenResponse.json().catch(() => null);
+
+  if (!tokenResponse.ok || !tokenData?.access_token) {
+    console.error(
+      "Google token exchange failed:",
+      tokenResponse.status
+    );
+
+    return textResponse("Google token exchange failed", 502);
+  }
+
+  let refreshToken = tokenData.refresh_token;
+
+  if (!refreshToken) {
+    const existing = await env.OAUTH_STORE.get(
+      googleTokenKey(account),
+      "json"
+    );
+
+    refreshToken = existing?.refresh_token;
+  }
+
+  if (!refreshToken) {
+    return textResponse(
+      "No refresh token received. Restart authorization.",
+      502
+    );
+  }
+
+  await env.OAUTH_STORE.put(
+    googleTokenKey(account),
+    JSON.stringify({
+      refresh_token: refreshToken,
+      scope: tokenData.scope || GOOGLE_OAUTH_SCOPE,
+      token_type: tokenData.token_type || "Bearer",
+      connected_at: now(),
+      account
+    })
+  );
+
+  await env.DB.prepare(
+    `INSERT INTO storage_accounts
+     (provider, account_name, status, metadata, created_at, updated_at)
+     VALUES ('google_drive', ?, 'active', ?, ?, ?)
+     ON CONFLICT(provider, account_name)
+     DO UPDATE SET
+       status='active',
+       updated_at=excluded.updated_at`
+  ).bind(
+    account,
+    JSON.stringify({ scope: tokenData.scope || GOOGLE_OAUTH_SCOPE }),
+    now(),
+    now()
+  ).run();
+
+  return textResponse(
+    `Google Drive account ${account} connected successfully. You can close this page.`
+  );
+}
+
+async function getGoogleDriveAccessToken(
+  env,
+  account = DEFAULT_DRIVE_ACCOUNT
+) {
+  account = validateAccount(account);
+
+  if (!env.OAUTH_STORE) {
+    throw new Error("OAUTH_STORE binding is missing");
+  }
+
+  const stored = await env.OAUTH_STORE.get(
+    googleTokenKey(account),
+    "json"
+  );
+
+  if (!stored?.refresh_token) {
+    throw new Error(
+      `Google Drive account ${account} is not connected`
+    );
+  }
+
+  const body = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    client_secret: env.GOOGLE_CLIENT_SECRET,
+    refresh_token: stored.refresh_token,
+    grant_type: "refresh_token"
+  });
+
+  const response = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data?.access_token) {
+    throw new Error("Google access token refresh failed");
+  }
+
+  return data.access_token;
+}
+
+async function googleRequest(
+  env,
+  account,
+  path,
+  options = {}
+) {
+  const token = await getGoogleDriveAccessToken(env, account);
+
+  const response = await fetch(`${GOOGLE_API}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {})
+    }
+  });
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      `Google Drive API error ${response.status}: ${data?.error?.message || "Request failed"}`
+    );
+  }
+
+  return data;
+}
+
+async function logStorageItem(
+  env,
+  account,
+  item,
+  parentId = null
+) {
+  if (!item?.id || !item?.name) return;
+
+  await env.DB.prepare(
+    `INSERT INTO storage_items
+     (provider, account_name, item_id, parent_id, name,
+      mime_type, metadata, created_at, updated_at)
+     VALUES ('google_drive', ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(provider, account_name, item_id)
+     DO UPDATE SET
+       parent_id=excluded.parent_id,
+       name=excluded.name,
+       mime_type=excluded.mime_type,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at`
+  ).bind(
+    account,
+    item.id,
+    parentId || item.parents?.[0] || null,
+    item.name,
+    item.mimeType || null,
+    JSON.stringify(item),
+    now(),
+    now()
+  ).run();
+}
+
+// ============================================================
+// GOOGLE DRIVE API
+// ============================================================
+
+async function handleDriveAPI(request, env, url) {
+  const action = url.pathname.replace("/api/drive/", "");
+
+  const account = validateAccount(
+    url.searchParams.get("account") || DEFAULT_DRIVE_ACCOUNT
+  );
+
+  try {
+    if (
+      action === "accounts" &&
+      request.method === "GET"
+    ) {
+      const result = await env.DB.prepare(
+        `SELECT account_name, status, root_folder_id,
+                created_at, updated_at
+         FROM storage_accounts
+         WHERE provider='google_drive'
+         ORDER BY id`
+      ).all();
+
+      return jsonResponse({
+        accounts: result.results || []
+      });
+    }
+
+    if (
+      action === "test" &&
+      request.method === "GET"
+    ) {
+      const data = await googleRequest(
+        env,
+        account,
+        "/files?pageSize=1&fields=files(id,name,mimeType)"
+      );
+
+      return jsonResponse({
+        connected: true,
+        account,
+        files: data.files || []
+      });
+    }
+
+    if (
+      action === "list" &&
+      request.method === "GET"
+    ) {
+      const pageSize = Math.min(
+        Math.max(Number(url.searchParams.get("pageSize") || 20), 1),
+        100
+      );
+
+      const params = new URLSearchParams({
+        pageSize: String(pageSize),
+        fields: "nextPageToken,files(id,name,mimeType,modifiedTime,size,parents,webViewLink)",
+        orderBy: "modifiedTime desc"
+      });
+
+      const query = url.searchParams.get("q");
+
+      params.set(
+        "q",
+        query || "trashed = false"
+      );
+
+      const pageToken = url.searchParams.get("pageToken");
+
+      if (pageToken) {
+        params.set("pageToken", pageToken);
+      }
+
+      const data = await googleRequest(
+        env,
+        account,
+        `/files?${params.toString()}`
+      );
+
+      for (const file of data.files || []) {
+        await logStorageItem(env, account, file);
+      }
+
+      return jsonResponse({
+        account,
+        ...data
+      });
+    }
+
+    if (
+      action === "get" &&
+      request.method === "GET"
+    ) {
+      const fileId = validateId(
+        url.searchParams.get("fileId"),
+        "fileId"
+      );
+
+      const data = await googleRequest(
+        env,
+        account,
+        `/files/${encodeURIComponent(fileId)}?fields=*`
+      );
+
+      await logStorageItem(env, account, data);
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "create-folder" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      if (!body?.name) {
+        return jsonResponse({ error: "name is required" }, 400);
+      }
+
+      const metadata = {
+        name: safeString(body.name, 200),
+        mimeType: "application/vnd.google-apps.folder"
+      };
+
+      if (body.parentId) {
+        metadata.parents = [
+          validateId(body.parentId, "parentId")
+        ];
+      }
+
+      const data = await googleRequest(
+        env,
+        account,
+        "/files?fields=id,name,mimeType,parents,webViewLink",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(metadata)
+        }
+      );
+
+      await logStorageItem(
+        env,
+        account,
+        data,
+        body.parentId || null
+      );
+
+      return jsonResponse(data, 201);
+    }
+
+    if (
+      action === "upload" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      if (
+        !body?.name ||
+        typeof body.content !== "string"
+      ) {
+        return jsonResponse({
+          error: "name and content are required"
+        }, 400);
+      }
+
+      const content = body.content;
+
+      if (content.length > 5_000_000) {
+        return jsonResponse({
+          error: "Content is too large for this endpoint"
+        }, 413);
+      }
+
+      const metadata = {
+        name: safeString(body.name, 200),
+        mimeType: safeString(body.mimeType || "text/plain", 150)
+      };
+
+      if (body.parentId) {
+        metadata.parents = [
+          validateId(body.parentId, "parentId")
+        ];
+      }
+
+      const boundary = "ahmed_ai_" + randomBase64Url(12);
+
+      const multipart =
+        `--${boundary}\r\n` +
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+        JSON.stringify(metadata) +
+        `\r\n--${boundary}\r\n` +
+        `Content-Type: ${metadata.mimeType}\r\n\r\n` +
+        content +
+        `\r\n--${boundary}--`;
+
+      const token = await getGoogleDriveAccessToken(
+        env,
+        account
+      );
+
+      const response = await fetch(
+        `${GOOGLE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,webViewLink,parents`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": `multipart/related; boundary=${boundary}`
+          },
+          body: multipart
+        }
+      );
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error?.message || "Google Drive upload failed"
+        );
+      }
+
+      await logStorageItem(
+        env,
+        account,
+        result,
+        body.parentId || null
+      );
+
+      return jsonResponse(result, 201);
+    }
+
+    if (
+      action === "download" &&
+      request.method === "GET"
+    ) {
+      const fileId = validateId(
+        url.searchParams.get("fileId"),
+        "fileId"
+      );
+
+      const token = await getGoogleDriveAccessToken(
+        env,
+        account
+      );
+
+      const response = await fetch(
+        `${GOOGLE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Google Drive download failed");
+      }
+
+      return new Response(response.body, {
+        headers: {
+          "content-type":
+            response.headers.get("content-type") ||
+            "application/octet-stream",
+          "content-disposition": "attachment",
+          "cache-control": "no-store"
+        }
+      });
+    }
+
+    if (
+      action === "read" &&
+      request.method === "GET"
+    ) {
+      const fileId = validateId(
+        url.searchParams.get("fileId"),
+        "fileId"
+      );
+
+      const token = await getGoogleDriveAccessToken(
+        env,
+        account
+      );
+
+      const response = await fetch(
+        `${GOOGLE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Google Drive read failed");
+      }
+
+      return jsonResponse({
+        fileId,
+        content: await response.text()
+      });
+    }
+
+    if (
+      action === "update" &&
+      request.method === "PATCH"
+    ) {
+      const body = await readJson(request);
+
+      const fileId = validateId(
+        body?.fileId,
+        "fileId"
+      );
+
+      const metadata = {};
+
+      if (body.name !== undefined) {
+        metadata.name = safeString(body.name, 200);
+      }
+
+      if (body.description !== undefined) {
+        metadata.description = safeString(
+          body.description,
+          1000
+        );
+      }
+
+      const data = await googleRequest(
+        env,
+        account,
+        `/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,modifiedTime`,
+        {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(metadata)
+        }
+      );
+
+      await logStorageItem(env, account, data);
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "move" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      const fileId = validateId(body?.fileId, "fileId");
+      const parentId = validateId(body?.parentId, "parentId");
+
+      const current = await googleRequest(
+        env,
+        account,
+        `/files/${encodeURIComponent(fileId)}?fields=parents`
+      );
+
+      const params = new URLSearchParams({
+        addParents: parentId,
+        fields: "id,name,parents,mimeType"
+      });
+
+      if (current.parents?.length) {
+        params.set(
+          "removeParents",
+          current.parents.join(",")
+        );
+      }
+
+      const data = await googleRequest(
+        env,
+        account,
+        `/files/${encodeURIComponent(fileId)}?${params}`,
+        { method: "PATCH" }
+      );
+
+      await logStorageItem(env, account, data, parentId);
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "delete" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      if (body?.confirm !== true) {
+        return jsonResponse({
+          error: "Deletion requires confirm:true"
+        }, 400);
+      }
+
+      const fileId = validateId(body.fileId, "fileId");
+
+      await googleRequest(
+        env,
+        account,
+        `/files/${encodeURIComponent(fileId)}`,
+        { method: "DELETE" }
+      );
+
+      await env.DB.prepare(
+        `DELETE FROM storage_items
+         WHERE provider='google_drive'
+           AND account_name=?
+           AND item_id=?`
+      ).bind(account, fileId).run();
+
+      return jsonResponse({
+        deleted: true,
+        fileId
+      });
+    }
+
+    if (
+      action === "set-root" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      const rootFolderId = validateId(
+        body?.rootFolderId,
+        "rootFolderId"
+      );
+
+      await env.DB.prepare(
+        `INSERT INTO storage_accounts
+         (provider, account_name, root_folder_id,
+          status, created_at, updated_at)
+         VALUES ('google_drive', ?, ?, 'active', ?, ?)
+         ON CONFLICT(provider, account_name)
+         DO UPDATE SET
+           root_folder_id=excluded.root_folder_id,
+           updated_at=excluded.updated_at`
+      ).bind(
+        account,
+        rootFolderId,
+        now(),
+        now()
+      ).run();
+
+      return jsonResponse({
+        updated: true,
+        account,
+        root_folder_id: rootFolderId
+      });
+    }
+
+    return jsonResponse({
+      error: "Unknown Drive action"
+    }, 404);
+  } catch (error) {
+    console.error("Drive API failed:", errorMessage(error));
+
+    return jsonResponse({
+      error: errorMessage(error)
+    }, 502);
+  }
+}
+
+// ============================================================
+// GITHUB API
+// ============================================================
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeJson(value) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function derLength(length) {
+  if (length < 0x80) return new Uint8Array([length]);
+  const bytes = [];
+  let value = length;
+  while (value > 0) {
+    bytes.unshift(value & 0xff);
+    value >>>= 8;
+  }
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+}
+
+function derWrap(tag, value) {
+  const length = derLength(value.length);
+  const output = new Uint8Array(1 + length.length + value.length);
+  output[0] = tag;
+  output.set(length, 1);
+  output.set(value, 1 + length.length);
+  return output;
+}
+
+function concatBytes(...arrays) {
+  const size = arrays.reduce((sum, item) => sum + item.length, 0);
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const item of arrays) {
+    output.set(item, offset);
+    offset += item.length;
+  }
+  return output;
+}
+
+function githubPrivateKeyDer(pemValue) {
+  const pem = String(pemValue || "").trim().replace(/\\n/g, "\n");
+  const match = pem.match(/-----BEGIN (RSA )?PRIVATE KEY-----([\s\S]+?)-----END (?:RSA )?PRIVATE KEY-----/);
+  if (!match) throw new Error("GITHUB_PRIVATE_KEY must contain the complete PEM, including BEGIN/END lines");
+  const binary = atob(match[2].replace(/\s/g, ""));
+  const keyBytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+
+  // WebCrypto imports PKCS#8. GitHub commonly supplies PKCS#1 RSA PEM,
+  // so wrap PKCS#1 in the standard PKCS#8 PrivateKeyInfo structure.
+  if (match[1]) {
+    const algorithm = new Uint8Array([
+      0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+      0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00
+    ]);
+    const privateKeyOctet = derWrap(0x04, keyBytes);
+    const version = new Uint8Array([0x02, 0x01, 0x00]);
+    return derWrap(0x30, concatBytes(version, algorithm, privateKeyOctet));
+  }
+
+  return keyBytes;
+}
+
+function hasGitHubAppConfig(env) {
+  return Boolean(env.GITHUB_APP_ID || env.GITHUB_INSTALLATION_ID || env.GITHUB_PRIVATE_KEY);
+}
+
+async function createGitHubAppJwt(env) {
+  const appId = safeString(env.GITHUB_APP_ID, 80);
+  if (!appId || !env.GITHUB_PRIVATE_KEY) throw new Error("GitHub App configuration incomplete: check GITHUB_APP_ID and GITHUB_PRIVATE_KEY");
+  const header = base64UrlEncodeJson({ alg: "RS256", typ: "JWT" });
+  const issuedAt = now() - 60;
+  const payload = base64UrlEncodeJson({ iat: issuedAt, exp: issuedAt + 9 * 60, iss: appId });
+  const unsigned = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    githubPrivateKeyDer(env.GITHUB_PRIVATE_KEY),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(unsigned)
+  );
+  return `${unsigned}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
+}
+
+async function githubInstallationToken(env, forceRefresh = false) {
+  const appId = safeString(env.GITHUB_APP_ID, 80);
+  const installationId = safeString(env.GITHUB_INSTALLATION_ID, 80);
+  if (!appId || !installationId || !env.GITHUB_PRIVATE_KEY) {
+    throw new Error("GitHub App configuration incomplete. Check GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_PRIVATE_KEY.");
+  }
+
+  const cacheKey = `github:app:installation-token:${appId}:${installationId}`;
+  if (!forceRefresh && env.OAUTH_STORE) {
+    const cached = await env.OAUTH_STORE.get(cacheKey, "json");
+    if (cached?.token && Number(cached.expires_at) > now() + 60) return cached.token;
+  }
+
+  const jwt = await createGitHubAppJwt(env);
+  const response = await fetch(`${GITHUB_API}/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${jwt}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "Ahmed-AI",
+      "content-type": "application/json"
+    },
+    body: "{}"
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.token) {
+    throw new Error(`GitHub App token error (${response.status}): ${data?.message || "Unable to create installation token"}`);
+  }
+
+  const expiresAt = Math.floor(new Date(data.expires_at || Date.now() + 55 * 60 * 1000).getTime() / 1000);
+  if (env.OAUTH_STORE) {
+    await env.OAUTH_STORE.put(cacheKey, JSON.stringify({ token: data.token, expires_at: expiresAt }), {
+      expirationTtl: Math.max(60, Math.min(3300, expiresAt - now() - 60))
+    });
+  }
+  return data.token;
+}
+
+async function githubRequest(env, path, options = {}) {
+  const useApp = hasGitHubAppConfig(env);
+  if (!useApp && !env.GITHUB_TOKEN) throw new Error("GitHub authentication is not configured. Set up GitHub App or GITHUB_TOKEN.");
+  if (useApp && (!env.GITHUB_APP_ID || !env.GITHUB_INSTALLATION_ID || !env.GITHUB_PRIVATE_KEY)) {
+    throw new Error("GitHub App configuration incomplete. Check all three App variables/secrets.");
+  }
+
+  for (let attempt = 0; attempt < (useApp ? 2 : 1); attempt++) {
+    const token = useApp
+      ? await githubInstallationToken(env, attempt > 0)
+      : env.GITHUB_TOKEN;
+    const response = await fetch(`${GITHUB_API}${path}`, {
+      ...options,
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Ahmed-AI",
+        ...(options.headers || {})
+      }
+    });
+
+    if (response.status === 204) return null;
+    const data = await response.json().catch(() => null);
+    if (response.status === 401 && useApp && attempt === 0) continue;
+    if (!response.ok) {
+      throw new Error(`GitHub API error ${response.status}: ${data?.message || "Request failed"}`);
+    }
+    return data;
+  }
+  throw new Error("GitHub App authentication failed after refreshing its installation token.");
+}
+
+async function logGitHubOperation(
+  env,
+  operation,
+  repository,
+  status,
+  details
+) {
+  await env.DB.prepare(
+    `INSERT INTO github_operations
+     (operation, repository, status, details, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).bind(
+    safeString(operation, 100),
+    repository ? safeString(repository, 200) : null,
+    safeString(status, 50),
+    JSON.stringify(details || {}),
+    now()
+  ).run();
+}
+
+async function handleGitHubAPI(request, env, url) {
+  const action = url.pathname.replace("/api/github/", "");
+
+  try {
+    if (
+      action === "user" &&
+      request.method === "GET"
+    ) {
+      if (hasGitHubAppConfig(env)) {
+        const installation = await githubRequest(env, "/installation");
+        const account = installation?.account || {};
+        return jsonResponse({
+          login: account.login || null,
+          name: account.name || account.login || null,
+          html_url: account.html_url || null,
+          account_type: account.type || null,
+          installation_id: installation?.id || null
+        });
+      }
+
+      const user = await githubRequest(env, "/user");
+      return jsonResponse({
+        login: user.login,
+        name: user.name,
+        html_url: user.html_url,
+        public_repos: user.public_repos
+      });
+    }
+
+    if (
+      action === "repos" &&
+      request.method === "GET"
+    ) {
+      const page = Math.max(
+        1,
+        Number(url.searchParams.get("page") || 1)
+      );
+
+      const perPage = Math.min(
+        100,
+        Math.max(
+          1,
+          Number(url.searchParams.get("per_page") || 30)
+        )
+      );
+
+      const repoResponse = hasGitHubAppConfig(env)
+        ? await githubRequest(env, `/installation/repositories?per_page=${perPage}&page=${page}`)
+        : await githubRequest(env, `/user/repos?sort=updated&per_page=${perPage}&page=${page}`);
+      const repos = Array.isArray(repoResponse) ? repoResponse : (repoResponse?.repositories || []);
+
+      for (const repo of repos || []) {
+        await env.DB.prepare(
+          `INSERT INTO github_repositories
+           (owner, repo_name, full_name, default_branch,
+            html_url, metadata, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(full_name)
+           DO UPDATE SET
+             default_branch=excluded.default_branch,
+             html_url=excluded.html_url,
+             metadata=excluded.metadata,
+             updated_at=excluded.updated_at`
+        ).bind(
+          repo.owner.login,
+          repo.name,
+          repo.full_name,
+          repo.default_branch || null,
+          repo.html_url || null,
+          JSON.stringify({
+            private: repo.private,
+            description: repo.description
+          }),
+          now(),
+          now()
+        ).run();
+      }
+
+      return jsonResponse({
+        repositories: repos,
+        total_count: repoResponse?.total_count ?? repos.length
+      });
+    }
+
+    if (
+      action === "contents" &&
+      request.method === "GET"
+    ) {
+      const owner = validateId(
+        url.searchParams.get("owner"),
+        "owner"
+      );
+
+      const repo = validateId(
+        url.searchParams.get("repo"),
+        "repo"
+      );
+
+      const path = url.searchParams.get("path") || "";
+      const ref = url.searchParams.get("ref");
+
+      const params = ref
+        ? `?ref=${encodeURIComponent(ref)}`
+        : "";
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}${params}`
+      );
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "write-file" &&
+      request.method === "PUT"
+    ) {
+      const body = await readJson(request);
+
+      const owner = validateId(body?.owner, "owner");
+      const repo = validateId(body?.repo, "repo");
+      const path = validateId(body?.path, "path");
+
+      if (
+        typeof body.content !== "string" ||
+        !body.message
+      ) {
+        return jsonResponse({
+          error: "content and message are required"
+        }, 400);
+      }
+
+      let sha = body.sha;
+
+      if (!sha) {
+        try {
+          const existing = await githubRequest(
+            env,
+            `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`
+          );
+
+          sha = existing?.sha;
+        } catch {
+          sha = undefined;
+        }
+      }
+
+      const payload = {
+        message: safeString(body.message, 200),
+        content: base64EncodeUnicode(body.content),
+        branch: body.branch || undefined
+      };
+
+      if (sha) {
+        payload.sha = sha;
+      }
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      await logGitHubOperation(
+        env,
+        "write-file",
+        `${owner}/${repo}`,
+        "completed",
+        { path }
+      );
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "delete-file" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      if (body?.confirm !== true) {
+        return jsonResponse({
+          error: "Deletion requires confirm:true"
+        }, 400);
+      }
+
+      const owner = validateId(body.owner, "owner");
+      const repo = validateId(body.repo, "repo");
+      const path = validateId(body.path, "path");
+      const sha = validateId(body.sha, "sha");
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            message: body.message ||
+              "Delete file via Ahmed AI",
+            sha,
+            branch: body.branch || undefined
+          })
+        }
+      );
+
+      await logGitHubOperation(
+        env,
+        "delete-file",
+        `${owner}/${repo}`,
+        "completed",
+        { path }
+      );
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "issues" &&
+      request.method === "GET"
+    ) {
+      const owner = validateId(
+        url.searchParams.get("owner"),
+        "owner"
+      );
+
+      const repo = validateId(
+        url.searchParams.get("repo"),
+        "repo"
+      );
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=all&per_page=50`
+      );
+
+      return jsonResponse({
+        issues: data
+      });
+    }
+
+    if (
+      action === "create-issue" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      const owner = validateId(body?.owner, "owner");
+      const repo = validateId(body?.repo, "repo");
+
+      if (!body.title) {
+        return jsonResponse({
+          error: "title is required"
+        }, 400);
+      }
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            title: safeString(body.title, 250),
+            body: safeString(body.body || "", 5000),
+            labels: Array.isArray(body.labels)
+              ? body.labels
+              : undefined
+          })
+        }
+      );
+
+      await logGitHubOperation(
+        env,
+        "create-issue",
+        `${owner}/${repo}`,
+        "completed",
+        { issue_number: data.number }
+      );
+
+      return jsonResponse(data, 201);
+    }
+
+    if (
+      action === "update-issue" &&
+      request.method === "PATCH"
+    ) {
+      const body = await readJson(request);
+
+      const owner = validateId(body?.owner, "owner");
+      const repo = validateId(body?.repo, "repo");
+      const issueNumber = Number(body?.issue_number);
+
+      if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+        return jsonResponse({
+          error: "Invalid issue_number"
+        }, 400);
+      }
+
+      const payload = {};
+
+      if (body.title !== undefined) {
+        payload.title = safeString(body.title, 250);
+      }
+
+      if (body.body !== undefined) {
+        payload.body = safeString(body.body, 5000);
+      }
+
+      if (body.state !== undefined) {
+        if (!["open", "closed"].includes(body.state)) {
+          return jsonResponse({
+            error: "Invalid issue state"
+          }, 400);
+        }
+
+        payload.state = body.state;
+      }
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`,
+        {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      await logGitHubOperation(
+        env,
+        "update-issue",
+        `${owner}/${repo}`,
+        "completed",
+        { issue_number: issueNumber }
+      );
+
+      return jsonResponse(data);
+    }
+
+    if (
+      action === "pulls" &&
+      request.method === "GET"
+    ) {
+      const owner = validateId(
+        url.searchParams.get("owner"),
+        "owner"
+      );
+
+      const repo = validateId(
+        url.searchParams.get("repo"),
+        "repo"
+      );
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=all&per_page=50`
+      );
+
+      return jsonResponse({
+        pull_requests: data
+      });
+    }
+
+    if (
+      action === "create-pull" &&
+      request.method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      const owner = validateId(body?.owner, "owner");
+      const repo = validateId(body?.repo, "repo");
+
+      if (!body.title || !body.head || !body.base) {
+        return jsonResponse({
+          error: "title, head and base are required"
+        }, 400);
+      }
+
+      const data = await githubRequest(
+        env,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            title: safeString(body.title, 250),
+            head: body.head,
+            base: body.base,
+            body: safeString(body.body || "", 5000),
+            draft: Boolean(body.draft)
+          })
+        }
+      );
+
+      await logGitHubOperation(
+        env,
+        "create-pull",
+        `${owner}/${repo}`,
+        "completed",
+        { pull_number: data.number }
+      );
+
+      return jsonResponse(data, 201);
+    }
+
+    if (
+      action === "operations" &&
+      request.method === "GET"
+    ) {
+      const result = await env.DB.prepare(
+        `SELECT id, operation, repository, status,
+                details, created_at
+         FROM github_operations
+         ORDER BY id DESC
+         LIMIT 100`
+      ).all();
+
+      return jsonResponse({
+        operations: result.results || []
+      });
+    }
+
+    return jsonResponse({
+      error: "Unknown GitHub action"
+    }, 404);
+  } catch (error) {
+    console.error("GitHub API failed:", errorMessage(error));
+
+    return jsonResponse({
+      error: errorMessage(error)
+    }, 502);
+  }
+}
+
+// ============================================================
+// REMINDERS API
+// ============================================================
+
+async function handleReminderAPI(request, env, url) {
+  const method = request.method;
+  const path = url.pathname;
+
+  try {
+    if (
+      path === "/api/reminders" &&
+      method === "GET"
+    ) {
+      const status = url.searchParams.get("status");
+
+      let result;
+
+      if (status) {
+        result = await env.DB.prepare(
+          `SELECT *
+           FROM reminders
+           WHERE status=?
+           ORDER BY due_at ASC
+           LIMIT 200`
+        ).bind(status).all();
+      } else {
+        result = await env.DB.prepare(
+          `SELECT *
+           FROM reminders
+           ORDER BY due_at ASC
+           LIMIT 200`
+        ).all();
+      }
+
+      return jsonResponse({
+        reminders: result.results || []
+      });
+    }
+
+    if (
+      path === "/api/reminders" &&
+      method === "POST"
+    ) {
+      const body = await readJson(request);
+
+      if (
+        !body?.text ||
+        !Number.isSafeInteger(Number(body.due_at)) ||
+        Number(body.due_at) <= now()
+      ) {
+        return jsonResponse({
+          error: "text and a future Unix timestamp due_at are required"
+        }, 400);
+      }
+
+      const recurrence = body.recurrence || "none";
+
+      if (
+        !["none", "daily", "weekly", "monthly"].includes(recurrence)
+      ) {
+        return jsonResponse({
+          error: "Invalid recurrence"
+        }, 400);
+      }
+
+      const chatId = String(
+        body.chat_id || env.ALLOWED_USER_ID || ""
+      );
+
+      if (!chatId) {
+        return jsonResponse({
+          error: "chat_id is required"
+        }, 400);
+      }
+
+      const result = await env.DB.prepare(
+        `INSERT INTO reminders
+         (chat_id, text, due_at, recurrence, status,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'active', ?, ?)`
+      ).bind(
+        chatId,
+        safeString(body.text, 3000),
+        Number(body.due_at),
+        recurrence,
+        now(),
+        now()
+      ).run();
+
+      return jsonResponse({
+        created: true,
+        reminder_id: result.meta.last_row_id
+      }, 201);
+    }
+
+    const match = path.match(
+      /^\/api\/reminders\/(\d+)$/
+    );
+
+    if (match) {
+      const id = Number(match[1]);
+
+      if (method === "PATCH") {
+        const body = await readJson(request);
+
+        const current = await env.DB.prepare(
+          "SELECT * FROM reminders WHERE id=?"
+        ).bind(id).first();
+
+        if (!current) {
+          return jsonResponse({
+            error: "Not found"
+          }, 404);
+        }
+
+        const text = body.text !== undefined
+          ? safeString(body.text, 3000)
+          : current.text;
+
+        const dueAt = body.due_at !== undefined
+          ? Number(body.due_at)
+          : Number(current.due_at);
+
+        const recurrence = body.recurrence !== undefined
+          ? body.recurrence
+          : current.recurrence;
+
+        const status = body.status !== undefined
+          ? body.status
+          : current.status;
+
+        if (!Number.isSafeInteger(dueAt)) {
+          return jsonResponse({
+            error: "Invalid due_at"
+          }, 400);
+        }
+
+        if (
+          !["none", "daily", "weekly", "monthly"].includes(recurrence)
+        ) {
+          return jsonResponse({
+            error: "Invalid recurrence"
+          }, 400);
+        }
+
+        if (
+          !["active", "paused", "cancelled"].includes(status)
+        ) {
+          return jsonResponse({
+            error: "Invalid status"
+          }, 400);
+        }
+
+        await env.DB.prepare(
+          `UPDATE reminders
+           SET text=?,
+               due_at=?,
+               recurrence=?,
+               status=?,
+               locked_at=NULL,
+               last_error=NULL,
+               updated_at=?
+           WHERE id=?`
+        ).bind(
+          text,
+          dueAt,
+          recurrence,
+          status,
+          now(),
+          id
+        ).run();
+
+        return jsonResponse({
+          updated: true,
+          id
+        });
+      }
+
+      if (method === "DELETE") {
+        const body = await readJson(request);
+
+        if (body?.confirm !== true) {
+          return jsonResponse({
+            error: "Deletion requires confirm:true"
+          }, 400);
+        }
+
+        await env.DB.prepare(
+          "DELETE FROM reminders WHERE id=?"
+        ).bind(id).run();
+
+        return jsonResponse({
+          deleted: true,
+          id
+        });
+      }
+    }
+
+    return jsonResponse({
+      error: "Not found"
+    }, 404);
+  } catch (error) {
+    console.error("Reminder API failed:", errorMessage(error));
+
+    return jsonResponse({
+      error: errorMessage(error)
+    }, 500);
+  }
+}
+
+// ============================================================
+// RECURRING REMINDERS
+// ============================================================
+
+function nextRecurringTime(dueAt, recurrence) {
+  const date = new Date(dueAt * 1000);
+
+  if (recurrence === "daily") {
+    date.setUTCDate(date.getUTCDate() + 1);
+  } else if (recurrence === "weekly") {
+    date.setUTCDate(date.getUTCDate() + 7);
+  } else if (recurrence === "monthly") {
+    const day = date.getUTCDate();
+
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + 1);
+
+    const lastDay = new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth() + 1,
+        0
+      )
+    ).getUTCDate();
+
+    date.setUTCDate(Math.min(day, lastDay));
+  } else {
+    return null;
+  }
+
+  return Math.floor(date.getTime() / 1000);
+}
+
+async function processDueReminders(env) {
+  const t = now();
+
+  const due = await env.DB.prepare(
+    `SELECT id
+     FROM reminders
+     WHERE status='active'
+       AND due_at<=?
+       AND (locked_at IS NULL OR locked_at<?)
+     ORDER BY due_at
+     LIMIT ?`
+  ).bind(
+    t,
+    t - LOCK_TIMEOUT_SECONDS,
+    CRON_BATCH_SIZE
+  ).all();
+
+  for (const item of due.results || []) {
+    const id = Number(item.id);
+
+    const claim = await env.DB.prepare(
+      `UPDATE reminders
+       SET locked_at=?, updated_at=?
+       WHERE id=?
+         AND status='active'
+         AND due_at<=?
+         AND (locked_at IS NULL OR locked_at<?)`
+    ).bind(
+      t,
+      t,
+      id,
+      t,
+      t - LOCK_TIMEOUT_SECONDS
+    ).run();
+
+    if (claim.meta.changes !== 1) continue;
+
+    const reminder = await env.DB.prepare(
+      "SELECT * FROM reminders WHERE id=?"
+    ).bind(id).first();
+
+    if (!reminder) continue;
+
+    try {
+      await sendTelegram(
+        env,
+        reminder.chat_id,
+        `⏰ تذكير:\n${reminder.text}`
+      );
+
+      const nextDue = nextRecurringTime(
+        Number(reminder.due_at),
+        reminder.recurrence
+      );
+
+      if (nextDue) {
+        // Skip missed intervals so the next reminder is in the future.
+        let adjustedDue = nextDue;
+
+        while (adjustedDue <= now()) {
+          adjustedDue = nextRecurringTime(
+            adjustedDue,
+            reminder.recurrence
+          );
+
+          if (!adjustedDue) break;
+        }
+
+        if (adjustedDue) {
+          await env.DB.prepare(
+            `UPDATE reminders
+             SET due_at=?,
+                 locked_at=NULL,
+                 last_error=NULL,
+                 updated_at=?
+             WHERE id=?`
+          ).bind(
+            adjustedDue,
+            now(),
+            id
+          ).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE reminders
+             SET status='completed',
+                 locked_at=NULL,
+                 updated_at=?
+             WHERE id=?`
+          ).bind(now(), id).run();
+        }
+      } else {
+        await env.DB.prepare(
+          `UPDATE reminders
+           SET status='completed',
+               locked_at=NULL,
+               last_error=NULL,
+               updated_at=?
+           WHERE id=?`
+        ).bind(now(), id).run();
+      }
+    } catch (error) {
+      console.error(
+        "Reminder delivery failed:",
+        errorMessage(error)
+      );
+
+      await env.DB.prepare(
+        `UPDATE reminders
+         SET locked_at=NULL,
+             last_error=?,
+             updated_at=?
+         WHERE id=?`
+      ).bind(
+        errorMessage(error),
+        now(),
+        id
+      ).run();
+    }
+  }
+}
+
+// ============================================================
+// TASK MANAGEMENT API
+// ============================================================
+
+async function handleTaskAPI(request, env, url) {
+  const path = url.pathname;
+
+  try {
+    if (
+      path === "/api/tasks" &&
+      request.method === "GET"
+    ) {
+      const status = url.searchParams.get("status");
+
+      const limit = Math.min(
+        100,
+        Math.max(
+          1,
+          Number(url.searchParams.get("limit") || 50)
+        )
+      );
+
+      let result;
+
+      if (status) {
+        result = await env.DB.prepare(
+          `SELECT id, update_id, chat_id, user_text,
+                  reply_text, status, ai_attempts,
+                  send_attempts, last_error,
+                  created_at, updated_at, next_retry_at
+           FROM tasks
+           WHERE status=?
+           ORDER BY id DESC
+           LIMIT ?`
+        ).bind(status, limit).all();
+      } else {
+        result = await env.DB.prepare(
+          `SELECT id, update_id, chat_id, user_text,
+                  reply_text, status, ai_attempts,
+                  send_attempts, last_error,
+                  created_at, updated_at, next_retry_at
+           FROM tasks
+           ORDER BY id DESC
+           LIMIT ?`
+        ).bind(limit).all();
+      }
+
+      return jsonResponse({
+        tasks: result.results || []
+      });
+    }
+
+    const match = path.match(
+      /^\/api\/tasks\/(\d+)\/retry$/
+    );
+
+    if (
+      match &&
+      request.method === "POST"
+    ) {
+      if (!env.TASK_QUEUE) {
+        return jsonResponse({
+          error: "Queue binding missing"
+        }, 503);
+      }
+
+      const id = Number(match[1]);
+
+      const result = await env.DB.prepare(
+        `UPDATE tasks
+         SET status='pending',
+             ai_attempts=0,
+             send_attempts=0,
+             locked_at=NULL,
+             next_retry_at=NULL,
+             last_error=NULL,
+             failure_notified_at=NULL,
+             updated_at=?
+         WHERE id=?
+           AND status IN ('failed','pending')`
+      ).bind(now(), id).run();
+
+      if (result.meta.changes !== 1) {
+        return jsonResponse({
+          error: "Task not found or cannot be retried"
+        }, 404);
+      }
+
+      await env.TASK_QUEUE.send({
+        taskId: id
+      });
+
+      return jsonResponse({
+        queued: true,
+        taskId: id
+      });
+    }
+
+    return jsonResponse({
+      error: "Not found"
+    }, 404);
+  } catch (error) {
+    console.error("Task API failed:", errorMessage(error));
+
+    return jsonResponse({
+      error: errorMessage(error)
+    }, 500);
+  }
+}
+
+// ============================================================
+// CRON RECOVERY
+// ============================================================
+
+async function runRecoveryCron(env) {
+  const t = now();
+
+  // Recover expired processing locks.
+  await env.DB.prepare(
+    `UPDATE tasks
+     SET status='failed',
+         last_error='processing lock expired; attempts exhausted',
+         locked_at=NULL,
+         next_retry_at=NULL,
+         updated_at=?
+     WHERE status='processing'
+       AND locked_at<?
+       AND ai_attempts>=?`
+  ).bind(
+    t,
+    t - LOCK_TIMEOUT_SECONDS,
+    MAX_AI_ATTEMPTS
+  ).run();
+
+  await env.DB.prepare(
+    `UPDATE tasks
+     SET status='pending',
+         locked_at=NULL,
+         next_retry_at=NULL,
+         updated_at=?
+     WHERE status='processing'
+       AND locked_at<?
+       AND ai_attempts<?`
+  ).bind(
+    t,
+    t - LOCK_TIMEOUT_SECONDS,
+    MAX_AI_ATTEMPTS
+  ).run();
+
+  // Requeue pending tasks.
+  const pending = await env.DB.prepare(
+    `SELECT id
+     FROM tasks
+     WHERE status='pending'
+       AND (next_retry_at IS NULL OR next_retry_at<=?)
+       AND (locked_at IS NULL OR locked_at<?)
+     ORDER BY id
+     LIMIT ?`
+  ).bind(
+    t,
+    t - LOCK_TIMEOUT_SECONDS,
+    CRON_BATCH_SIZE
+  ).all();
+
+  for (const row of pending.results || []) {
+    await enqueuePendingTask(env, Number(row.id));
+  }
+
+  // Retry generated replies.
+  const generated = await env.DB.prepare(
+    `SELECT id
+     FROM tasks
+     WHERE status='generated'
+       AND (next_retry_at IS NULL OR next_retry_at<=?)
+       AND (locked_at IS NULL OR locked_at<?)
+     ORDER BY id
+     LIMIT ?`
+  ).bind(
+    t,
+    t - LOCK_TIMEOUT_SECONDS,
+    CRON_BATCH_SIZE
+  ).all();
+
+  for (const row of generated.results || []) {
+    try {
+      await env.TASK_QUEUE.send({
+        taskId: Number(row.id)
+      });
+    } catch (error) {
+      console.error(
+        "Generated task enqueue failed:",
+        errorMessage(error)
+      );
+    }
+  }
+
+  // Notify about failed tasks.
+  const failed = await env.DB.prepare(
+    `SELECT id
+     FROM tasks
+     WHERE status='failed'
+       AND failure_notified_at IS NULL
+     ORDER BY id
+     LIMIT 5`
+  ).all();
+
+  for (const row of failed.results || []) {
+    await notifyFailure(env, Number(row.id));
+  }
+
+  // Process scheduled reminders.
+  await processDueReminders(env);
+
+  // Existing daily cleanup behavior.
+  const date = new Date();
+
+  if (
+    date.getUTCHours() === 3 &&
+    date.getUTCMinutes() === 0
+  ) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `DELETE FROM tasks
+         WHERE status IN ('sent','failed')
+           AND updated_at<?`
+      ).bind(t - 30 * 24 * 3600),
+
+      env.DB.prepare(
+        `DELETE FROM messages
+         WHERE created_at<?`
+      ).bind(t - 90 * 24 * 3600)
+    ]);
+  }
+}
+
+async function enqueuePendingTask(env, taskId) {
+  const t = now();
+
+  const claim = await env.DB.prepare(
+    `UPDATE tasks
+     SET locked_at=?, updated_at=?
+     WHERE id=?
+       AND status='pending'
+       AND (locked_at IS NULL OR locked_at<?)
+       AND (next_retry_at IS NULL OR next_retry_at<=?)`
+  ).bind(
+    t,
+    t,
+    taskId,
+    t - LOCK_TIMEOUT_SECONDS,
+    t
+  ).run();
+
+  if (claim.meta.changes !== 1) return;
+
+  try {
+    await env.TASK_QUEUE.send({
+      taskId
+    });
+  } catch (error) {
+    await env.DB.prepare(
+      `UPDATE tasks
+       SET locked_at=NULL,
+           updated_at=?
+       WHERE id=? AND status='pending'`
+    ).bind(now(), taskId).run();
+
+    console.error(
+      "Queue publish failed:",
+      errorMessage(error)
+    );
+  }
+}
+
