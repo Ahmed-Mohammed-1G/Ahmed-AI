@@ -646,6 +646,7 @@ async function callGemini(env, history, userText, chatId) {
         result = { ok: false, error: errorMessage(error) };
       }
       if (result?.file_sent) return "__FILE_SENT__";
+      if (result?.browse_prompt_sent) return "__UI_SENT__";
       functionResponses.push({ functionResponse: { name: call.name, response: { result } } });
     }
 
@@ -793,7 +794,11 @@ async function executeDriveTool(env, name, a, chatId) {
     return { accounts: result.results || [] };
   }
   if (name === "drive_test") return await callInternalApi(handleDriveAPI, env, "/api/drive/test", "GET", { account });
-  if (name === "drive_list") return await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: a.q || "trashed = false", pageSize: a.pageSize || 20, pageToken: a.pageToken });
+  if (name === "drive_list") {
+    const data = await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: a.q || "trashed = false", pageSize: a.pageSize || 100, pageToken: a.pageToken });
+    await startBrowseSession(env, chatId, { provider: "drive", account, title: "Google Drive", path: "", stack: [], items: data.files || [] });
+    return { browse_prompt_sent: true };
+  }
   if (name === "drive_get") return await callInternalApi(handleDriveAPI, env, "/api/drive/get", "GET", { account, fileId: validateId(a.fileId, "fileId") });
   if (name === "drive_read") {
     const fileId = validateId(a.fileId, "fileId");
@@ -855,8 +860,11 @@ async function executeGitHubTool(env, name, a, chatId) {
     const repo = validateId(a.repo, "repo");
     const data = await callInternalApi(handleGitHubAPI, env, "/api/github/contents", "GET", { owner, repo, path: a.path || "", ref: a.ref });
 
-    // Directory listing: keep the existing structured result.
-    if (Array.isArray(data)) return data;
+    // Directory listing opens the interactive file browser.
+    if (Array.isArray(data)) {
+      await startBrowseSession(env, chatId, { provider: "github", owner, repo, ref: a.ref || "", title: `${owner}/${repo}`, path: a.path || "", stack: [], items: data });
+      return { browse_prompt_sent: true };
+    }
     if (!data || typeof data !== "object" || !data.type || data.type !== "file") return data;
 
     const hasExcerpt = (a.start_line !== undefined && a.start_line !== null) || (a.end_line !== undefined && a.end_line !== null);
@@ -1225,6 +1233,181 @@ async function sendTelegram(env, chatId, messageText, options = {}) {
   }
 }
 
+
+async function startBrowseSession(env, chatId, session) {
+  const key = `browse:${String(chatId)}`;
+  await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+  await sendTelegram(env, chatId,
+    `🗂️ <b>استعراض ${escapeTelegramHtml(session.title)}</b>\n\nتحب تشوف الملفات بأي طريقة؟`,
+    { reply_markup: { inline_keyboard: [[
+      { text: "🌳 نظرية", callback_data: "browse:theory" },
+      { text: "📱 عملية", callback_data: "browse:practical" }
+    ]] } }
+  );
+}
+
+function browsePathTitle(session) {
+  return session.path ? `${session.title}/${session.path}` : session.title;
+}
+
+function browseItemLabel(item, index) {
+  const folder = sessionItemIsFolder(item, item.__provider);
+  const name = safeString(item.name || item.path || "بدون اسم", 48);
+  return `${folder ? "📁" : "📄"} ${name}`;
+}
+
+function sessionItemIsFolder(item, provider) {
+  return provider === "drive"
+    ? item.mimeType === "application/vnd.google-apps.folder"
+    : item.type === "dir";
+}
+
+function renderBrowseTree(session) {
+  const lines = [`🌳 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>`];
+  for (const item of (session.items || []).slice(0, 80)) {
+    const folder = sessionItemIsFolder(item, session.provider);
+    lines.push(`├── ${folder ? "📁" : "📄"} ${escapeTelegramHtml(item.name || item.path || "بدون اسم")}`);
+  }
+  if ((session.items || []).length > 80) lines.push(`… و${session.items.length - 80} عنصر إضافي`);
+  return lines.join("\n");
+}
+
+function renderBrowseKeyboard(session) {
+  const items = (session.items || []).slice(0, 18);
+  const rows = items.map((item, index) => [{
+    text: browseItemLabel(item, index),
+    callback_data: `browse:item:${index}`
+  }]);
+  rows.push([
+    { text: "↩️ رجوع", callback_data: "browse:back" },
+    { text: "📦 تحميل المجلد ZIP", callback_data: "browse:zip" }
+  ]);
+  return { inline_keyboard: rows };
+}
+
+async function fetchBrowseChildren(env, session, pathValue) {
+  if (session.provider === "drive") {
+    const parentId = pathValue || "root";
+    const q = `'${parentId.replace(/'/g, "\\'")}' in parents and trashed = false`;
+    const data = await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", {
+      account: session.account, q, pageSize: 100
+    });
+    return data.files || [];
+  }
+  return await callInternalApi(handleGitHubAPI, env, "/api/github/contents", "GET", {
+    owner: session.owner, repo: session.repo, path: pathValue, ref: session.ref
+  });
+}
+
+async function editBrowseMessage(env, chatId, messageId, text, replyMarkup) {
+  return telegramApiRequest(env, "editMessageText", {
+    chat_id: chatId, message_id: messageId, text,
+    parse_mode: "HTML", disable_web_page_preview: true,
+    reply_markup: replyMarkup || { inline_keyboard: [] }
+  });
+}
+
+async function handleBrowseCallback(env, query, chatId, messageId, data) {
+  const key = `browse:${String(chatId)}`;
+  const session = await env.OAUTH_STORE.get(key, "json");
+  if (!session) {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "انتهت صلاحية القائمة. اطلب الخريطة من جديد." });
+    return true;
+  }
+  if (data === "browse:theory") {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+    await editBrowseMessage(env, chatId, messageId, renderBrowseTree(session));
+    return true;
+  }
+  if (data === "browse:practical") {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    return true;
+  }
+  if (data === "browse:back") {
+    const previous = session.stack.pop();
+    if (!previous) {
+      await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "أنت بالفعل في المجلد الرئيسي." });
+      return true;
+    }
+    session.path = previous.path;
+    session.items = previous.items;
+    await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    return true;
+  }
+  if (data === "browse:zip") {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "تجهيز ZIP للمجلد غير متاح في هذا الإصدار بعد.", show_alert: true });
+    return true;
+  }
+  if (data.startsWith("browse:item:")) {
+    const index = Number(data.slice("browse:item:".length));
+    const item = session.items?.[index];
+    if (!item) {
+      await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "العنصر لم يعد موجودًا." });
+      return true;
+    }
+    const folder = sessionItemIsFolder(item, session.provider);
+    const itemPath = session.provider === "drive"
+      ? item.id
+      : (item.path || [session.path, item.name].filter(Boolean).join("/"));
+    if (folder) {
+      session.stack.push({ path: session.path, items: session.items });
+      session.path = itemPath;
+      session.items = await fetchBrowseChildren(env, session, itemPath);
+      await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+      await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+      await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+      return true;
+    }
+    session.selected = {
+      name: item.name || item.path || "file",
+      path: itemPath,
+      id: item.id || null,
+      url: item.html_url || item.webViewLink || null
+    };
+    await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+    await editBrowseMessage(env, chatId, messageId,
+      `📄 <b>${escapeTelegramHtml(session.selected.name)}</b>\n\nاختار الإجراء المطلوب:`,
+      { inline_keyboard: [[
+        { text: "🔗 فتح", callback_data: "file:open" },
+        { text: "⬇️ تحميل", callback_data: "file:download" },
+        { text: "↩️ رجوع", callback_data: "file:back" }
+      ]] }
+    );
+    return true;
+  }
+  if (data === "file:back") {
+    delete session.selected;
+    await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    return true;
+  }
+  if (data === "file:open" || data === "file:download") {
+    const selected = session.selected;
+    if (!selected) {
+      await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "اختار الملف من جديد." });
+      return true;
+    }
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: data === "file:open" ? "جاري فتح الرابط..." : "جاري تحميل الملف..." });
+    if (data === "file:open") {
+      if (selected.url) await sendTelegram(env, chatId, `🔗 <a href="${escapeTelegramHtml(selected.url)}">${escapeTelegramHtml(selected.name)}</a>`);
+      else if (session.provider === "github") {
+        const url = `https://github.com/${encodeURIComponent(session.owner)}/${encodeURIComponent(session.repo)}/blob/${session.ref || "HEAD"}/${encodePath(selected.path)}`;
+        await sendTelegram(env, chatId, `🔗 <a href="${escapeTelegramHtml(url)}">فتح ${escapeTelegramHtml(selected.name)}</a>`);
+      } else await sendTelegram(env, chatId, "رابط فتح الملف غير متاح من بيانات Google Drive.");
+    } else {
+      if (session.provider === "drive") await executeDriveTool(env, "drive_read", { account: session.account, fileId: selected.id }, chatId);
+      else await executeGitHubTool(env, "github_contents", { owner: session.owner, repo: session.repo, path: selected.path, ref: session.ref }, chatId);
+    }
+    return true;
+  }
+  return false;
+}
+
 async function handleTelegramCallback(env, query) {
   const chatId = query.message?.chat?.id;
   const messageId = query.message?.message_id;
@@ -1232,7 +1415,12 @@ async function handleTelegramCallback(env, query) {
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "غير مصرح." });
     return;
   }
-  const choice = String(query.data || "").slice("confirm:".length);
+  const data = String(query.data || "");
+  if (data.startsWith("browse:") || data.startsWith("file:")) {
+    const handled = await handleBrowseCallback(env, query, chatId, messageId, data);
+    if (handled) return;
+  }
+  const choice = data.slice("confirm:".length);
   if (!["yes", "no"].includes(choice) || !env.OAUTH_STORE) {
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "الاختيار غير متاح." });
     return;
@@ -1294,7 +1482,7 @@ async function sendReply(env, taskId) {
 
   try {
     const pendingConfirmation = env.OAUTH_STORE ? await env.OAUTH_STORE.get(toolConfirmationKey(task.chat_id), "json") : null;
-    if (task.reply_text !== "__FILE_SENT__") {
+    if (task.reply_text !== "__FILE_SENT__" && task.reply_text !== "__UI_SENT__") {
       await sendTelegram(env, task.chat_id, task.reply_text || "(رد فاضي)", pendingConfirmation ? {
         reply_markup: { inline_keyboard: [[{ text: "✅ موافقة", callback_data: "confirm:yes" }, { text: "❌ رفض", callback_data: "confirm:no" }]] }
       } : {});
