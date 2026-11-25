@@ -1238,7 +1238,7 @@ async function startBrowseSession(env, chatId, session) {
   const key = `browse:${String(chatId)}`;
   await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
   await sendTelegram(env, chatId,
-    `🗂️ <b>استعراض ${escapeTelegramHtml(session.title)}</b>\n\nتحب تشوف الملفات بأي طريقة؟`,
+    `🗂️ **استعراض ${session.title}**\n\nتحب تشوف الملفات بأي طريقة؟`,
     { reply_markup: { inline_keyboard: [[
       { text: "🌳 نظرية", callback_data: "browse:theory" },
       { text: "📱 عملية", callback_data: "browse:practical" }
@@ -1476,10 +1476,10 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     }
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: data === "file:open" ? "جاري فتح الرابط..." : "جاري تحميل الملف..." });
     if (data === "file:open") {
-      if (selected.url) await sendTelegram(env, chatId, `🔗 <a href="${escapeTelegramHtml(selected.url)}">${escapeTelegramHtml(selected.name)}</a>`);
+      if (selected.url) await sendTelegram(env, chatId, `[🔗 ${selected.name}](${selected.url})`);
       else if (session.provider === "github") {
         const url = `https://github.com/${encodeURIComponent(session.owner)}/${encodeURIComponent(session.repo)}/blob/${session.ref || "HEAD"}/${encodePath(selected.path)}`;
-        await sendTelegram(env, chatId, `🔗 <a href="${escapeTelegramHtml(url)}">فتح ${escapeTelegramHtml(selected.name)}</a>`);
+        await sendTelegram(env, chatId, `[🔗 فتح ${selected.name}](${url})`);
       } else await sendTelegram(env, chatId, "رابط فتح الملف غير متاح من بيانات Google Drive.");
     } else {
       if (session.provider === "drive") await executeDriveTool(env, "drive_read", { account: session.account, fileId: selected.id }, chatId);
