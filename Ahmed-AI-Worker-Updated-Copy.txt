@@ -1,3 +1,5 @@
+const MINI_APP_HTML = "<!doctype html><html lang=\"ar\" dir=\"rtl\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover\"><meta name=\"theme-color\" content=\"#0a1020\"><title>Ahmed AI Explorer</title><script src=\"https://telegram.org/js/telegram-web-app.js\"></script><style>\n:root{color-scheme:dark;--bg:#0a1020;--panel:#121d31;--line:#263b59;--muted:#91a5c2;--txt:#edf4ff;--blue:#579bfa}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% 0,#1b3b63 0,transparent 38%),linear-gradient(145deg,#090e1b,#101b30);color:var(--txt);font-family:Inter,system-ui,\"Segoe UI\",sans-serif;min-height:100vh}.wrap{max-width:940px;margin:auto;padding:calc(18px + env(safe-area-inset-top)) 16px calc(25px + env(safe-area-inset-bottom))}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.brand{display:flex;align-items:center;gap:11px}.mark{width:45px;height:45px;border-radius:15px;background:linear-gradient(140deg,#2378df,#6556d9);display:grid;place-items:center;font-size:23px;font-weight:900;box-shadow:0 8px 28px #2465c855}.brand b{font-size:17px}.brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:1.5px;margin-top:3px}.tag{border:1px solid #2c466a;background:#14243c;color:#a8ceff;border-radius:30px;padding:7px 11px;font-size:10px;letter-spacing:1px}.hero{padding:20px;border:1px solid #2a405f;border-radius:21px;background:linear-gradient(120deg,#172e4ddd,#111c30ee);margin-bottom:14px;box-shadow:0 18px 48px #0003}.hero small{color:#85bcff;font-weight:800;letter-spacing:1px}.hero h2{font-size:21px;margin:8px 0 5px;overflow-wrap:anywhere}.hero p{font-size:12px;color:var(--muted);margin:0}.tools{display:flex;gap:9px;margin:14px 0}.search{flex:1;min-width:0;border:1px solid var(--line);background:#111b2d;color:var(--txt);border-radius:13px;padding:13px;font-size:14px;outline:none}.search:focus{border-color:var(--blue);box-shadow:0 0 0 3px #579bfa22}.back{border:1px solid var(--line);background:#192840;color:#e4efff;border-radius:13px;padding:0 15px;font-weight:700}.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin:8px 3px 12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}.item{position:relative;text-align:right;border:1px solid #263a56;background:linear-gradient(145deg,#16243a,#101a2b);border-radius:17px;padding:14px;min-height:125px;color:var(--txt);cursor:pointer;transition:.15s}.item:active{transform:scale(.98)}.item:hover{border-color:#579bfa}.glyph{width:48px;height:48px;border-radius:14px;background:#202f47;display:grid;place-items:center;margin-bottom:12px;overflow:hidden}.glyph img{width:32px;height:32px;object-fit:contain}.glyph .ext{font-size:12px;font-weight:900;color:white}.folder .glyph{background:linear-gradient(145deg,#244e7d,#183253)}.folder svg{width:28px;stroke:#a5ceff;fill:none;stroke-width:1.8}.name{font-size:13px;font-weight:750;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:10px;color:var(--muted);margin-top:5px}.arrow{position:absolute;left:12px;top:15px;color:#7893b7}.empty,.notice{border:1px dashed #304563;border-radius:16px;padding:25px;text-align:center;color:var(--muted);font-size:13px}.notice{margin-top:15px}.toast{display:none;position:fixed;bottom:calc(15px + env(safe-area-inset-bottom));left:15px;right:15px;max-width:600px;margin:auto;padding:12px;background:#1a2b45;border:1px solid #3a5d87;border-radius:13px;color:#e3efff;font-size:12px;z-index:8}.sheet{display:none;position:fixed;inset:0;background:#030813aa;align-items:flex-end;z-index:9}.sheet.show{display:flex}.dialog{width:100%;max-width:620px;margin:auto auto 0;background:#121e32;border:1px solid #344d70;border-radius:23px 23px 0 0;padding:22px 18px calc(20px + env(safe-area-inset-bottom))}.dialog h3{margin:0 0 6px;direction:ltr;text-align:right;overflow-wrap:anywhere}.dialog p{color:var(--muted);font-size:12px;margin:0 0 17px}.actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}.action{border:0;border-radius:13px;padding:14px;font-weight:800;background:linear-gradient(120deg,#287ce4,#5264d8);color:white}.secondary{background:#1c2d47;border:1px solid #344d70;color:#dceaff}.close{width:100%;margin-top:9px;background:none;border:0;color:var(--muted);padding:10px}@media(min-width:700px){.wrap{padding-top:30px}.grid{grid-template-columns:repeat(auto-fill,minmax(175px,1fr))}.item{min-height:140px;padding:17px}}\n</style></head><body><main class=\"wrap\"><header class=\"top\"><div class=\"brand\"><div class=\"mark\">A</div><div><b>Ahmed AI</b><small>DEVELOPER WORKSPACE</small></div></div><span class=\"tag\">EXPLORER</span></header><section class=\"hero\"><small>FILE MANAGEMENT</small><h2 id=\"title\">Connecting…</h2><p id=\"subtitle\">Repositories and cloud files, organized.</p></section><div class=\"tools\"><input id=\"search\" class=\"search\" placeholder=\"ابحث عن ملف أو مجلد…\"><button id=\"back\" class=\"back\">رجوع</button></div><div class=\"meta\"><span id=\"count\">جارٍ التحميل…</span><span id=\"provider\"></span></div><section id=\"grid\" class=\"grid\"></section><div id=\"notice\" class=\"notice\" hidden>افتح الواجهة من زر Ahmed AI داخل Telegram.</div></main><div id=\"toast\" class=\"toast\"></div><div id=\"sheet\" class=\"sheet\"><div class=\"dialog\"><h3 id=\"selectedName\"></h3><p id=\"selectedMeta\"></p><div class=\"actions\"><button id=\"openFile\" class=\"action\">فتح الملف</button><button id=\"downloadFile\" class=\"action secondary\">تحميل إلى Telegram</button></div><button id=\"closeSheet\" class=\"close\">إغلاق</button></div></div>\n<script>(()=>{const tg=window.Telegram?.WebApp,$=id=>document.getElementById(id),initData=tg?.initData||\"\";let s={items:[],selected:null};if(tg){tg.ready();tg.expand();tg.setHeaderColor?.(\"#0a1020\");tg.setBackgroundColor?.(\"#0a1020\")}\nconst logos={html:[\"html5\",\"E34F26\",\"HTML5\"],htm:[\"html5\",\"E34F26\",\"HTML5\"],css:[\"css3\",\"1572B6\",\"CSS3\"],js:[\"javascript\",\"F7DF1E\",\"JS\"],jsx:[\"react\",\"61DAFB\",\"JSX\"],ts:[\"typescript\",\"3178C6\",\"TS\"],tsx:[\"react\",\"61DAFB\",\"TSX\"],py:[\"python\",\"3776AB\",\"PY\"],java:[\"openjdk\",\"FFFFFF\",\"JAVA\"],php:[\"php\",\"777BB4\",\"PHP\"],cpp:[\"cplusplus\",\"00599C\",\"C++\"],c:[\"c\",\"A8B9CC\",\"C\"],cs:[\"dotnet\",\"512BD4\",\"C#\"],go:[\"go\",\"00ADD8\",\"GO\"],rs:[\"rust\",\"FFFFFF\",\"RS\"],rb:[\"ruby\",\"CC342D\",\"RB\"],swift:[\"swift\",\"F05138\",\"SW\"],kt:[\"kotlin\",\"7F52FF\",\"KT\"],vue:[\"vuedotjs\",\"4FC08D\",\"VUE\"],sql:[\"postgresql\",\"4169E1\",\"SQL\"],json:[\"json\",\"F5C542\",\"{}\"],md:[\"markdown\",\"FFFFFF\",\"MD\"],dockerfile:[\"docker\",\"2496ED\",\"DOCKER\"]};\nconst ext=n=>{n=String(n||\"\").toLowerCase();return n.includes(\".\")?n.split(\".\").pop():n},esc=x=>String(x??\"\").replace(/[&<>\"']/g,c=>({\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]));\nfunction icon(x){if(x.kind===\"folder\")return '<svg viewBox=\"0 0 24 24\"><path d=\"M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z\"/></svg>';const l=logos[ext(x.name)]||null;return l?'<img src=\"https://cdn.simpleicons.org/'+l[0]+'/'+l[1]+'\" alt=\"'+l[2]+'\" onerror=\"this.remove();this.parentNode.innerHTML=\\'<span class=ext>'+l[2]+'</span>\\'\">':'<span class=\"ext\">'+esc((ext(x.name)||\"FILE\").slice(0,6).toUpperCase())+'</span>'}\nfunction render(){const q=$(\"search\").value.toLowerCase().trim(),a=s.items.filter(x=>x.name.toLowerCase().includes(q));$(\"grid\").innerHTML=a.length?a.map(x=>'<button class=\"item '+(x.kind===\"folder\"?\"folder\":\"\")+'\" data-i=\"'+x.index+'\"><span class=\"arrow\">‹</span><span class=\"glyph\">'+icon(x)+'</span><div class=\"name\">'+esc(x.name)+'</div><div class=\"sub\">'+(x.kind===\"folder\"?\"FOLDER\":esc(x.extension||\"FILE\").toUpperCase())+(x.sizeLabel?\" · \"+esc(x.sizeLabel):\"\")+'</div></button>').join(\"\"):'<div class=\"empty\" style=\"grid-column:1/-1\">لا توجد نتائج مطابقة</div>';$(\"grid\").querySelectorAll(\".item\").forEach(b=>b.onclick=()=>act(\"open\",+b.dataset.i));$(\"title\").textContent=s.path||s.title||\"Ahmed AI\";$(\"subtitle\").textContent=s.path?\"تصفح محتويات المجلد واختر الملف المطلوب\":\"اختر مستودعًا أو مجلدًا لعرض محتوياته\";$(\"count\").textContent=a.length+\" عنصر\";$(\"provider\").textContent=s.provider===\"drive\"?\"GOOGLE DRIVE\":\"GITHUB\"}\nfunction toast(t){$(\"toast\").textContent=t;$(\"toast\").style.display=\"block\";setTimeout(()=>$(\"toast\").style.display=\"none\",2700)}\nasync function api(action,index){const r=await fetch(\"/miniapp/api\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify({initData,action,index})}),d=await r.json();if(!r.ok)throw Error(d.error||\"تعذر تنفيذ الطلب\");return d}\nfunction apply(d){s={...s,...d};render()}\nasync function act(a,i){try{if(a===\"open\"){const x=s.items.find(y=>y.index===i);if(!x)return;if(x.kind===\"folder\"||s.provider===\"repos\"){apply(await api(\"open\",i));$(\"search\").value=\"\";return}s.selected=x;$(\"selectedName\").textContent=x.name;$(\"selectedMeta\").textContent=(x.extension||\"FILE\").toUpperCase()+\" · \"+(x.sizeLabel||\"الحجم غير متاح\");$(\"sheet\").classList.add(\"show\")}else if(a===\"back\"){apply(await api(\"back\"));$(\"search\").value=\"\"}else if(a===\"download\"){toast(\"جاري إرسال الملف إلى Telegram…\");await api(\"download\");$(\"sheet\").classList.remove(\"show\");toast(\"تم إرسال طلب التحميل\")}else if(a===\"openSelected\"){const d=await api(\"openSelected\");if(d.url)tg?.openLink(d.url);else toast(\"رابط فتح الملف غير متاح\");$(\"sheet\").classList.remove(\"show\")}}catch(e){toast(e.message)}}\n$(\"search\").oninput=render;$(\"back\").onclick=()=>act(\"back\");$(\"openFile\").onclick=()=>act(\"openSelected\");$(\"downloadFile\").onclick=()=>act(\"download\");$(\"closeSheet\").onclick=()=>$(\"sheet\").classList.remove(\"show\");$(\"sheet\").onclick=e=>{if(e.target===$(\"sheet\"))$(\"sheet\").classList.remove(\"show\")};\n(async()=>{if(!initData){$(\"notice\").hidden=false;$(\"count\").textContent=\"يلزم فتح التطبيق من Telegram\";return}try{apply(await api(\"list\"))}catch(e){toast(e.message);$(\"count\").textContent=\"تعذر تحميل الملفات\"}})()})();</script></body></html>";
+
 
 // ============================================================
 // AHMED AI - CLOUDFLARE WORKER
@@ -205,6 +207,11 @@ export default {
     const path = url.pathname;
 
     try {
+      if (request.method === "GET" && path === "/app") {
+        return new Response(MINI_APP_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+      }
+      if (request.method === "POST" && path === "/miniapp/api") return await handleMiniAppAPI(request, env);
+
       if (request.method === "GET" && path === "/health") {
         await env.DB.prepare("SELECT 1").first();
 
@@ -1257,15 +1264,71 @@ async function sendTelegram(env, chatId, messageText, options = {}) {
 }
 
 
+async function verifyTelegramWebAppInitData(initData, botToken) {
+  if (typeof initData !== "string" || !initData || !botToken) return null;
+  const p = new URLSearchParams(initData), hash = p.get("hash"), authDate = Number(p.get("auth_date"));
+  if (!hash || !/^[a-f0-9]{64}$/i.test(hash) || !Number.isFinite(authDate) || Math.abs(Date.now()/1000-authDate)>86400) return null;
+  const check = [...p.entries()].filter(([k])=>k!=="hash").sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>k+"="+v).join("\n");
+  const enc=new TextEncoder(), k=await crypto.subtle.importKey("raw",enc.encode("WebAppData"),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  const secret=await crypto.subtle.sign("HMAC",k,enc.encode(botToken));
+  const hk=await crypto.subtle.importKey("raw",secret,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  const digest=new Uint8Array(await crypto.subtle.sign("HMAC",hk,enc.encode(check)));
+  const actual=[...digest].map(b=>b.toString(16).padStart(2,"0")).join("");let diff=actual.length^hash.length;
+  for(let i=0;i<Math.max(actual.length,hash.length);i++)diff|=(actual.charCodeAt(i)||0)^(hash.toLowerCase().charCodeAt(i)||0);
+  if(diff)return null;try{const u=JSON.parse(p.get("user")||"null");return u&&u.id!=null?u:null}catch{return null}
+}
+function miniAppItem(item,index,session){
+  const folder=sessionItemIsFolder(item,session.provider),name=String(item.name||item.path||"بدون اسم"),extension=name.includes(".")?name.split(".").pop().toLowerCase():"",bytes=Number(item.size);
+  return {index,name,kind:folder?"folder":"file",extension,sizeLabel:Number.isFinite(bytes)&&bytes>0?(bytes<1024?bytes+" B":bytes<1048576?(bytes/1024).toFixed(1)+" KB":(bytes/1048576).toFixed(1)+" MB"):""};
+}
+async function handleMiniAppAPI(request,env){
+  if(!env.OAUTH_STORE||!env.TELEGRAM_BOT_TOKEN)return jsonResponse({error:"Mini App is not configured."},503);
+  const body=await readJson(request);if(!body||typeof body!=="object")return jsonResponse({error:"Invalid request."},400);
+  const user=await verifyTelegramWebAppInitData(body.initData,env.TELEGRAM_BOT_TOKEN);
+  if(!user||String(user.id)!==String(env.ALLOWED_USER_ID))return jsonResponse({error:"غير مصرح. افتح الواجهة من حساب Telegram المسموح."},403);
+  const chatId=String(user.id),key="browse:"+chatId,session=await env.OAUTH_STORE.get(key,"json");
+  if(!session)return jsonResponse({error:"انتهت جلسة التصفح. اطلب خريطة GitHub أو Drive من البوت أولًا."},404);
+  const action=String(body.action||"list");
+  try{
+    if(action==="back"){
+      const prev=session.stack?.pop();if(prev){session.provider=prev.provider||session.provider;session.path=prev.path||"";session.items=prev.items||[];session.currentName=prev.currentName||"";if(session.provider==="repos"){delete session.owner;delete session.repo;delete session.ref;session.title="GitHub"}}
+    }else if(action==="open"){
+      const index=Number(body.index);if(!Number.isInteger(index)||index<0||index>=(session.items||[]).length)return jsonResponse({error:"العنصر غير موجود."},404);
+      const item=session.items[index];
+      if(session.provider==="repos"){
+        const full=item.full_name||((item.owner?.login||"")+"/"+(item.name||"")),parts=full.split("/");
+        if(parts.length!==2||!parts[0]||!parts[1])return jsonResponse({error:"بيانات المستودع غير مكتملة."},400);
+        session.stack||=[];session.stack.push({provider:session.provider,path:session.path,items:session.items,currentName:session.currentName});
+        session.provider="github";session.owner=parts[0];session.repo=parts[1];session.ref=item.default_branch||"main";session.title=full;session.path="";session.currentName=parts[1];session.items=await fetchBrowseChildren(env,session,"");
+      }else if(sessionItemIsFolder(item,session.provider)){
+        const p=session.provider==="drive"?item.id:(item.path||[session.path,item.name].filter(Boolean).join("/"));
+        session.stack||=[];session.stack.push({provider:session.provider,path:session.path,items:session.items,currentName:session.currentName});
+        session.path=p;session.currentName=item.name||item.path||"folder";session.items=await fetchBrowseChildren(env,session,p);
+      }else session.selected={name:item.name||item.path||"file",path:item.path||[session.path,item.name].filter(Boolean).join("/"),id:item.id||null,url:item.html_url||item.webViewLink||null};
+    }else if(action==="download"){
+      if(!session.selected)return jsonResponse({error:"اختار ملفًا أولًا."},400);
+      if(session.provider==="drive")await executeDriveTool(env,"drive_read",{account:session.account,fileId:session.selected.id},chatId);
+      else await executeGitHubTool(env,"github_contents",{owner:session.owner,repo:session.repo,path:session.selected.path,ref:session.ref},chatId);
+      await env.OAUTH_STORE.put(key,JSON.stringify(session),{expirationTtl:1800});return jsonResponse({ok:true,sent:true});
+    }else if(action==="openSelected"){
+      if(!session.selected)return jsonResponse({error:"اختار ملفًا أولًا."},400);
+      let url=session.selected.url;if(!url&&session.provider==="github")url="https://github.com/"+encodeURIComponent(session.owner)+"/"+encodeURIComponent(session.repo)+"/blob/"+encodeURIComponent(session.ref||"HEAD")+"/"+encodePath(session.selected.path);
+      return jsonResponse({ok:true,url:url||null});
+    }else if(action!=="list")return jsonResponse({error:"Unknown action."},400);
+    await env.OAUTH_STORE.put(key,JSON.stringify(session),{expirationTtl:1800});
+    return jsonResponse({ok:true,title:session.title||"Ahmed AI",path:session.path||"",provider:session.provider,canBack:Boolean(session.stack?.length),items:(session.items||[]).slice(0,200).map((x,i)=>miniAppItem(x,i,session))});
+  }catch(e){console.error("Mini App browse failed:",errorMessage(e));return jsonResponse({error:safeString(errorMessage(e),250)||"تعذر تنفيذ العملية."},500)}
+}
+
 async function startBrowseSession(env, chatId, session) {
   const key = `browse:${String(chatId)}`;
   await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
   await sendTelegram(env, chatId,
     `🗂️ **استعراض ${session.title}**\n\nتحب تشوف الملفات بأي طريقة؟`,
-    { reply_markup: { inline_keyboard: [[
-      { text: "🌳 نظرية", callback_data: "browse:theory" },
-      { text: "📱 عملية", callback_data: "browse:practical" }
-    ]] } }
+    { reply_markup: { inline_keyboard: [
+      ...(env.MINI_APP_URL && /^https:\/\//i.test(env.MINI_APP_URL) ? [[{ text: "🚀 فتح مستكشف الملفات الاحترافي", web_app: { url: env.MINI_APP_URL } }]] : []),
+      [{ text: "🌳 نظرية", callback_data: "browse:theory" }, { text: "📱 قائمة Telegram", callback_data: "browse:practical" }]
+    ] } }
   );
 }
 
@@ -1274,45 +1337,18 @@ function browsePathTitle(session) {
 }
 
 function browseFileIcon(item, provider) {
-  if (sessionItemIsFolder(item, provider)) return provider === "repos" ? "🧊" : "🗂️";
-  const name = String(item.name || item.path || "").toLowerCase();
-  const mime = String(item.mimeType || item.type || "").toLowerCase();
-  const ext = name.includes(".") ? name.split(".").pop() : "";
-  // A cohesive, modern emoji palette: visual media, documents, data and language identities.
-  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|ico|heic|avif)$/.test(ext)) return "🌄";
-  if (mime.startsWith("video/") || /^(mp4|mkv|mov|avi|webm|m4v|3gp|mpeg|mpg)$/.test(ext)) return "📽️";
-  if (mime.startsWith("audio/") || /^(mp3|wav|ogg|m4a|flac|aac|opus|wma)$/.test(ext)) return "🎧";
-  if (ext === "pdf" || mime === "application/pdf") return "🟥";
-  if (/^(doc|docx|odt|rtf)$/.test(ext)) return "📘";
-  if (/^(xls|xlsx|csv|ods)$/.test(ext)) return "🟩";
-  if (/^(ppt|pptx|odp)$/.test(ext)) return "🟧";
-  if (/^(zip|rar|7z|tar|gz|bz2|xz)$/.test(ext)) return "🧰";
-  if (/^(js|jsx|mjs|cjs)$/.test(ext)) return "⚡";
-  if (/^(ts|tsx)$/.test(ext)) return "💠";
-  if (ext === "py") return "🐍";
-  if (ext === "java") return "☕";
-  if (/^(c|h|cpp|cc|cxx|hpp|hh)$/.test(ext)) return "🛠️";
-  if (ext === "cs") return "🟪";
-  if (/^(html|htm|xml|xhtml)$/.test(ext)) return "🕸️";
-  if (/^(css|scss|sass|less)$/.test(ext)) return "🪄";
-  if (ext === "php") return "🐘";
-  if (ext === "go") return "🚀";
-  if (ext === "rs") return "🦀";
-  if (ext === "rb") return "💎";
-  if (ext === "swift") return "🪽";
-  if (/^(kt|kts)$/.test(ext)) return "🪻";
-  if (/^(sql|db|sqlite)$/.test(ext)) return "🗄️";
-  if (/^(json|ya?ml|toml|ini|env)$/.test(ext)) return "🧩";
-  if (/^(md|txt|log|rst)$/.test(ext)) return "📜";
-  if (/^(sh|bat|ps1)$/.test(ext)) return "⌘";
-  if (/^(exe|msi|apk|app|dmg)$/.test(ext)) return "📦";
-  if (/^(ttf|otf|woff2?)$/.test(ext)) return "🔤";
-  return "📃";
+  if (sessionItemIsFolder(item, provider)) return "DIR";
+  const name=String(item.name||item.path||"").toLowerCase(),mime=String(item.mimeType||item.type||"").toLowerCase(),ext=name.includes(".")?name.split(".").pop():"";
+  if(mime.startsWith("image/")||/^(png|jpe?g|gif|webp|svg|bmp|ico)$/.test(ext))return "IMG";
+  if(mime.startsWith("video/")||/^(mp4|mkv|mov|avi|webm)$/.test(ext))return "VIDEO";
+  if(mime.startsWith("audio/")||/^(mp3|wav|ogg|m4a|flac)$/.test(ext))return "AUDIO";
+  if(ext==="pdf")return "PDF";if(/^(doc|docx|odt|rtf)$/.test(ext))return "DOC";if(/^(xls|xlsx|csv|ods)$/.test(ext))return "XLS";if(/^(ppt|pptx|odp)$/.test(ext))return "PPT";if(/^(zip|rar|7z|tar|gz)$/.test(ext))return "ZIP";
+  if(/^(js|jsx|mjs|cjs)$/.test(ext))return "JS";if(/^(ts|tsx)$/.test(ext))return "TS";if(ext==="py")return "PY";if(ext==="java")return "JAVA";if(/^(c|h|cpp|cc|cxx|hpp)$/.test(ext))return "C++";if(ext==="cs")return "C#";if(/^(html|htm|xhtml)$/.test(ext))return "HTML5";if(/^(css|scss|sass|less)$/.test(ext))return "CSS3";if(ext==="php")return "PHP";if(ext==="go")return "GO";if(ext==="rs")return "RUST";if(ext==="rb")return "RUBY";if(ext==="swift")return "SWIFT";if(/^(kt|kts)$/.test(ext))return "KT";if(/^(sql|db|sqlite)$/.test(ext))return "SQL";if(/^(json|ya?ml|toml|ini|env)$/.test(ext))return "DATA";if(/^(md|txt|log|rst)$/.test(ext))return "TEXT";if(/^(sh|bat|ps1)$/.test(ext))return "SHELL";return "FILE";
 }
 function browseItemLabel(item, index, provider) {
   const icon = browseFileIcon(item, provider);
   const name = safeString(item.name || item.path || "بدون اسم", 48);
-  return icon + " " + name;
+  return "[" + icon + "] " + name;
 }
 function sessionItemIsFolder(item, provider) {
   if (provider === "drive") return item.mimeType === "application/vnd.google-apps.folder";
