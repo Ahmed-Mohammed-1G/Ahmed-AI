@@ -1385,34 +1385,45 @@ async function renderBrowseTree(env, session) {
   const lines = [`🌳 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>`];
   const maxEntries = 75;
   let rendered = 0;
-  async function walk(items, parentPath, depth) {
+
+  async function walk(items, parentPath, depth, prefix) {
     const list = Array.isArray(items) ? items : [];
     for (let i = 0; i < list.length && rendered < maxEntries; i++) {
-      const item = list[i], last = i === list.length - 1 || rendered === maxEntries - 1;
+      const item = list[i];
+      const last = i === list.length - 1 || rendered === maxEntries - 1;
       const branch = last ? "└── " : "├── ";
       const name = escapeTelegramHtml(safeString(item.name || item.path || "بدون اسم", 90));
-      lines.push("  ".repeat(depth) + branch + browseTelegramIcon(item, session.provider) + " " + name);
+      lines.push(prefix + branch + browseTelegramIcon(item, session.provider) + " " + name);
       rendered++;
+
       if (sessionItemIsFolder(item, session.provider) && depth < 3 && rendered < maxEntries) {
-        const childPath = session.provider === "drive" ? item.id : (item.path || [parentPath, item.name].filter(Boolean).join("/"));
+        const childPath = session.provider === "drive"
+          ? item.id
+          : (item.path || [parentPath, item.name].filter(Boolean).join("/"));
         try {
           const children = await fetchBrowseChildren(env, session, childPath);
-          if (children.length) await walk(children, childPath, depth + 1);
-          else lines.push("  ".repeat(depth + 1) + "└── <i>مجلد فارغ</i>");
+          if (children.length) {
+            const childPrefix = prefix + (last ? "    " : "│   ");
+            await walk(children, childPath, depth + 1, childPrefix);
+          } else {
+            lines.push(prefix + (last ? "    " : "│   ") + "└── <i>مجلد فارغ</i>");
+          }
         } catch (error) {
-          lines.push("  ".repeat(depth + 1) + "└── <i>تعذر تحميل المحتويات</i>");
+          lines.push(prefix + (last ? "    " : "│   ") + "└── <i>تعذر تحميل المحتويات</i>");
         }
       }
     }
   }
+
   if (session.provider === "repos") {
     for (const item of (session.items || []).slice(0, maxEntries)) {
       lines.push("├── 📦 " + escapeTelegramHtml(safeString(item.full_name || item.name || "مستودع", 90)));
       rendered++;
     }
   } else {
-    await walk(session.items || [], session.path || "", 0);
+    await walk(session.items || [], session.path || "", 0, "");
   }
+
   if (rendered >= maxEntries) lines.push("… <i>تم اختصار العرض؛ افتح المستكشف لرؤية بقية الملفات.</i>");
   return lines.join("\n").slice(0, 3800);
 }
