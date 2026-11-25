@@ -344,6 +344,14 @@ async function handleTelegram(request, env) {
     if (session) { await sendTelegram(env, msg.chat.id, renderBrowseTree(session)); return textResponse("ok"); }
   }
 
+  const normalizedMapRequest = msg.text.trim().toLowerCase().replace(/[أإآ]/g, "ا");
+  if (/^(هاتلي|هات|اعرض|افتح|وريني|عاوز|عايز)?\s*(خريطة|خريطه)\s*(جيتهب|جيت هاب|github)(\s|$)/i.test(normalizedMapRequest) ||
+      /^(هاتلي|هات|اعرض|افتح|وريني)?\s*(مستودعات|repos)\s*(جيتهب|جيت هاب|github)?$/i.test(normalizedMapRequest)) {
+    try { await executeGitHubTool(env, "github_repos", { page: 1, per_page: 30 }, msg.chat.id); }
+    catch (error) { await sendTelegram(env, msg.chat.id, "❌ تعذر تحميل خريطة GitHub: " + safeString(errorMessage(error), 300)); }
+    return textResponse("ok");
+  }
+
   const command = msg.text.trim()
     .split(/\s+/, 1)[0]
     .split("@", 1)[0]
@@ -1265,12 +1273,45 @@ function browsePathTitle(session) {
   return session.path ? `${session.title}/${session.path}` : session.title;
 }
 
-function browseItemLabel(item, index, provider) {
-  const folder = sessionItemIsFolder(item, provider);
-  const name = safeString(item.name || item.path || "بدون اسم", 48);
-  return `${folder ? "📁" : "📄"} ${name}`;
+function browseFileIcon(item, provider) {
+  if (sessionItemIsFolder(item, provider)) return provider === "repos" ? "📦" : "🗂️";
+  const name = String(item.name || item.path || "").toLowerCase();
+  const mime = String(item.mimeType || item.type || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|ico|heic)$/.test(ext)) return "🖼️";
+  if (mime.startsWith("video/") || /^(mp4|mkv|mov|avi|webm|m4v|3gp)$/.test(ext)) return "🎬";
+  if (mime.startsWith("audio/") || /^(mp3|wav|ogg|m4a|flac|aac)$/.test(ext)) return "🎵";
+  if (ext === "pdf" || mime === "application/pdf") return "📕";
+  if (/^(doc|docx|odt|rtf)$/.test(ext)) return "📝";
+  if (/^(xls|xlsx|csv|ods)$/.test(ext)) return "📊";
+  if (/^(ppt|pptx|odp)$/.test(ext)) return "📽️";
+  if (/^(zip|rar|7z|tar|gz|bz2)$/.test(ext)) return "🗜️";
+  if (/^(js|jsx|mjs|cjs)$/.test(ext)) return "🟨";
+  if (/^(ts|tsx)$/.test(ext)) return "🔷";
+  if (ext === "py") return "🐍";
+  if (ext === "java") return "☕";
+  if (/^(c|h|cpp|cc|cxx|hpp|hh)$/.test(ext)) return "⚙️";
+  if (ext === "cs") return "🟪";
+  if (/^(html|htm|xml|xhtml)$/.test(ext)) return "🌐";
+  if (/^(css|scss|sass|less)$/.test(ext)) return "🎨";
+  if (ext === "php") return "🐘";
+  if (ext === "go") return "🐹";
+  if (ext === "rs") return "🦀";
+  if (ext === "rb") return "💎";
+  if (ext === "swift") return "🕊️";
+  if (/^(kt|kts)$/.test(ext)) return "🟣";
+  if (/^(sql|db|sqlite)$/.test(ext)) return "🗃️";
+  if (/^(json|ya?ml|toml|ini|env)$/.test(ext)) return "🔧";
+  if (/^(md|txt|log|rst)$/.test(ext)) return "📄";
+  if (/^(sh|bat|ps1)$/.test(ext)) return "⌨️";
+  return "📃";
 }
 
+function browseItemLabel(item, index, provider) {
+  const icon = browseFileIcon(item, provider);
+  const name = safeString(item.name || item.path || "بدون اسم", 48);
+  return icon + " " + name;
+}
 function sessionItemIsFolder(item, provider) {
   if (provider === "drive") return item.mimeType === "application/vnd.google-apps.folder";
   if (provider === "repos") return true;
@@ -1371,10 +1412,14 @@ function renderBrowseKeyboard(session) {
     text: browseItemLabel(item, index, session.provider),
     callback_data: `browse:item:${index}`
   }]);
-  rows.push([
+  const controls = [
     { text: "↩️ رجوع", callback_data: "browse:back" },
-    { text: "📦 تحميل المجلد ZIP", callback_data: "browse:zip" }
-  ]);
+    { text: "📦 تحميل ZIP", callback_data: "browse:zip" }
+  ];
+  if (session.provider === "repos" && (!session.stack || session.stack.length === 0)) {
+    controls.push({ text: "🌳 الخريطة النظرية", callback_data: "browse:theory" });
+  }
+  rows.push(controls);
   return { inline_keyboard: rows };
 }
 
@@ -1409,7 +1454,7 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
   }
   if (data === "browse:theory") {
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-    await editBrowseMessage(env, chatId, messageId, renderBrowseTree(session));
+    await editBrowseMessage(env, chatId, messageId, renderBrowseTree(session), { inline_keyboard: [[{ text: "📱 التحويل للخريطة العملية", callback_data: "browse:practical" }]] });
     return true;
   }
   if (data === "browse:practical") {
