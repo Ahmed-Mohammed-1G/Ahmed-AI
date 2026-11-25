@@ -1334,20 +1334,13 @@ function browseMiniAppButton(env) {
     ? { text: "🗂️ المستكشف", web_app: { url: env.MINI_APP_URL } }
     : null;
 }
-function renderBrowseTheoryKeyboard(env, nodes = [], hasParent = false) {
+function renderBrowseTheoryKeyboard(env) {
   /** @type {Array<Array<{text: string, callback_data?: string, web_app?: {url: string}}>>} */
-  const rows = (nodes || []).map((node, index) => [{
-    text: (node.folder ? "📁 " : browseTelegramIcon(node.item, node.provider) + " ") + safeString(node.name, 52),
-    callback_data: "browse:theory:item:" + index
-  }]);
-  if (hasParent) rows.push([{ text: "⬆️ المجلد السابق", callback_data: "browse:theory:up" }]);
-  /** @type {Array<{text: string, callback_data?: string, web_app?: {url: string}}>} */
   const footer = [];
   const miniApp = browseMiniAppButton(env);
   if (miniApp) footer.push(miniApp);
   footer.push({ text: "📱 العملية", callback_data: "browse:practical" });
-  rows.push(footer);
-  return { inline_keyboard: rows };
+  return { inline_keyboard: [footer] };
 }
 async function startBrowseSession(env, chatId, session) {
   const key = `browse:${String(chatId)}`;
@@ -1418,7 +1411,13 @@ async function buildBrowseTheoryView(env, session) {
         : (item.path || [parentPath, item.name].filter(Boolean).join("/"));
       const itemDisplayPath = [parentDisplayPath, itemName].filter(Boolean).join("/");
       const last = i === list.length - 1 || rendered === maxEntries - 1;
-      lines.push(prefix + (last ? "└── " : "├── ") + browseTelegramIcon(item, context.provider) + " " + escapeTelegramHtml(itemName));
+      const itemUrl = browseTheoryItemUrl({
+        item, provider: context.provider, owner: context.owner, repo: context.repo,
+        ref: context.ref, path: itemPath, folder, repository: false
+      });
+      const itemLabel = browseTelegramIcon(item, context.provider) + " " + escapeTelegramHtml(itemName);
+      lines.push(prefix + (last ? "└── " : "├── ") +
+        (itemUrl ? '<a href="' + escapeTelegramHtml(itemUrl) + '">' + itemLabel + '</a>' : itemLabel));
       nodes.push({
         name: itemName, path: itemPath, folder, item, provider: context.provider,
         owner: context.owner || null, repo: context.repo || null, ref: context.ref || null,
@@ -1451,7 +1450,10 @@ async function buildBrowseTheoryView(env, session) {
       if (parts.length !== 2 || !parts[0] || !parts[1]) continue;
       const repoLabel = safeString(repoItem.name || parts[1], 90);
       const repoContext = { provider: "github", owner: parts[0], repo: parts[1], ref: repoItem.default_branch || "main", title: repoLabel };
-      lines.push((i === repos.length - 1 ? "└── " : "├── ") + "📦 " + escapeTelegramHtml(repoLabel));
+      const repoUrl = browseTheoryItemUrl({ item: repoItem, provider: "github", owner: parts[0], repo: parts[1], ref: repoContext.ref, repository: true });
+      const repoLabelHtml = "📦 " + escapeTelegramHtml(repoLabel);
+      lines.push((i === repos.length - 1 ? "└── " : "├── ") +
+        (repoUrl ? '<a href="' + escapeTelegramHtml(repoUrl) + '">' + repoLabelHtml + '</a>' : repoLabelHtml));
       nodes.push({
         name: repoLabel, path: "", folder: true, item: repoItem, provider: "github",
         owner: parts[0], repo: parts[1], ref: repoContext.ref, title: repoLabel, repository: true,
@@ -1476,7 +1478,7 @@ async function buildBrowseTheoryView(env, session) {
   if (rendered >= maxEntries) lines.push("… <i>تم اختصار العرض؛ افتح المستكشف لرؤية بقية الملفات.</i>");
   return {
     text: lines.join("\n").slice(0, 3800),
-    markup: renderBrowseTheoryKeyboard(env, nodes, (state.stack || []).length > 0)
+    markup: renderBrowseTheoryKeyboard(env)
   };
 }
 
@@ -1706,13 +1708,18 @@ function renderBrowseKeyboard(session, env) {
   const items = (session.items || []).slice(0, 18);
   /** @type {Array<Array<{text: string, callback_data?: string, web_app?: {url: string}}>>} */
   const rows = items.map((item, index) => [{ text: browseItemLabel(item, index, session.provider), callback_data: `browse:item:${index}` }]);
-  if (session.stack && session.stack.length) rows.push([{ text: "↩️ رجوع للمجلد السابق", callback_data: "browse:back" }]);
-  if (session.provider !== "repos") rows.push([{ text: "📦 تحميل ZIP", callback_data: "browse:zip" }]);
   /** @type {Array<{text: string, callback_data?: string, web_app?: {url: string}}>} */
-  const controls = [{ text: "🌳 النظرية", callback_data: "browse:theory" }];
+  const mainControls = [];
   const miniApp = browseMiniAppButton(env);
-  if (miniApp) controls.push(miniApp);
-  rows.push(controls);
+  if (miniApp) mainControls.push(miniApp);
+  mainControls.push({ text: "🌳 النظرية", callback_data: "browse:theory" });
+  rows.push(mainControls);
+  if ((session.stack && session.stack.length) || session.provider !== "repos") {
+    const navigation = [];
+    if (session.stack && session.stack.length) navigation.push({ text: "↩️ رجوع للمجلد السابق", callback_data: "browse:back" });
+    if (session.provider !== "repos") navigation.push({ text: "📦 تحميل ZIP", callback_data: "browse:zip" });
+    if (navigation.length) rows.push(navigation);
+  }
   return { inline_keyboard: rows };
 }
 
