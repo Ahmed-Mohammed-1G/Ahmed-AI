@@ -795,7 +795,7 @@ async function executeDriveTool(env, name, a, chatId) {
   }
   if (name === "drive_test") return await callInternalApi(handleDriveAPI, env, "/api/drive/test", "GET", { account });
   if (name === "drive_list") {
-    const data = await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: a.q || "trashed = false", pageSize: a.pageSize || 100, pageToken: a.pageToken });
+    const data = await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: a.q || "'root' in parents and trashed = false", pageSize: a.pageSize || 100, pageToken: a.pageToken });
     await startBrowseSession(env, chatId, { provider: "drive", account, title: "Google Drive", path: "", stack: [], items: data.files || [] });
     return { browse_prompt_sent: true };
   }
