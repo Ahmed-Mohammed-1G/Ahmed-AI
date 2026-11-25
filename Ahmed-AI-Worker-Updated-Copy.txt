@@ -1395,7 +1395,7 @@ async function buildBrowseTheoryView(env, session) {
       provider: session.provider, path: session.path || "", title: session.title,
       owner: session.owner || null, repo: session.repo || null, ref: session.ref || null,
       account: session.account || null, currentName: session.currentName || session.title,
-      items: session.items || [], stack: []
+      displayPath: session.currentName || session.title, items: session.items || [], stack: []
     };
   }
   const state = session.theory;
@@ -1404,7 +1404,7 @@ async function buildBrowseTheoryView(env, session) {
   const maxEntries = 60;
   let rendered = 0;
 
-  async function walk(items, context, parentPath, depth, prefix) {
+  async function walk(items, context, parentPath, parentDisplayPath, depth, prefix) {
     const list = Array.isArray(items) ? items : [];
     for (let i = 0; i < list.length && rendered < maxEntries; i++) {
       const item = list[i];
@@ -1413,12 +1413,14 @@ async function buildBrowseTheoryView(env, session) {
       const itemPath = context.provider === "drive"
         ? (folder ? item.id : (item.id || item.path || itemName))
         : (item.path || [parentPath, item.name].filter(Boolean).join("/"));
+      const itemDisplayPath = [parentDisplayPath, itemName].filter(Boolean).join("/");
       const last = i === list.length - 1 || rendered === maxEntries - 1;
       lines.push(prefix + (last ? "└── " : "├── ") + browseTelegramIcon(item, context.provider) + " " + escapeTelegramHtml(itemName));
       nodes.push({
         name: itemName, path: itemPath, folder, item, provider: context.provider,
         owner: context.owner || null, repo: context.repo || null, ref: context.ref || null,
-        account: context.account || null, title: context.title || state.title
+        account: context.account || null, title: context.title || state.title,
+        displayPath: itemDisplayPath
       });
       rendered++;
 
@@ -1427,7 +1429,7 @@ async function buildBrowseTheoryView(env, session) {
         try {
           const childSession = { ...session, ...context, provider: context.provider };
           const children = await fetchBrowseChildren(env, childSession, itemPath);
-          if (children.length) await walk(children, context, itemPath, depth + 1, childPrefix);
+          if (children.length) await walk(children, context, itemPath, itemDisplayPath, depth + 1, childPrefix);
           else lines.push(childPrefix + "└── <i>مجلد فارغ</i>");
         } catch (error) {
           lines.push(childPrefix + "└── <i>تعذر تحميل المحتويات</i>");
@@ -1453,14 +1455,14 @@ async function buildBrowseTheoryView(env, session) {
       if (rendered < maxEntries) {
         try {
           const children = await fetchBrowseChildren(env, { ...session, ...repoContext }, "");
-          if (children.length) await walk(children, repoContext, "", 0, "    ");
+          if (children.length) await walk(children, repoContext, "", fullName, 0, "    ");
         } catch (error) {
           lines.push("    └── <i>تعذر تحميل محتويات المستودع</i>");
         }
       }
     }
   } else {
-    await walk(state.items || [], state, state.path || "", 0, "");
+    await walk(state.items || [], state, state.path || "", state.displayPath || state.title || "", 0, "");
   }
 
   state.nodes = nodes;
@@ -1519,7 +1521,7 @@ async function handleBrowseTheoryCallback(env, query, chatId, messageId, data, s
     }
     state.selected = selected;
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
-    const fullPath = selected.repository ? selected.name : [selected.title, selected.path].filter(Boolean).join("/");
+    const fullPath = selected.displayPath || selected.name;
     const detailText = (selected.folder ? "📁 <b>تفاصيل المجلد</b>" : "📄 <b>تفاصيل الملف</b>") +
       "\n<b>الاسم:</b> " + escapeTelegramHtml(selected.name) +
       "\n<b>المسار:</b> <code>" + escapeTelegramHtml(fullPath || selected.name) + "</code>";
@@ -1544,12 +1546,12 @@ async function handleBrowseTheoryCallback(env, query, chatId, messageId, data, s
       const current = {
         provider: state.provider, path: state.path, title: state.title, owner: state.owner,
         repo: state.repo, ref: state.ref, account: state.account, currentName: state.currentName,
-        items: state.items, stack: state.stack || []
+        displayPath: state.displayPath, items: state.items, stack: state.stack || []
       };
       const nextContext = {
         provider: selected.provider, path: selected.path || "", title: selected.title || selected.name,
         owner: selected.owner, repo: selected.repo, ref: selected.ref, account: selected.account,
-        currentName: selected.name
+        currentName: selected.name, displayPath: selected.displayPath || selected.name
       };
       const nextItems = await fetchBrowseChildren(env, { ...session, ...nextContext }, selected.path || "");
       session.theory = { ...nextContext, items: nextItems, stack: [...(state.stack || []), current] };
