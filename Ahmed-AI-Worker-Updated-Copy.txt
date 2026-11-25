@@ -1272,6 +1272,84 @@ function renderBrowseTree(session) {
   return lines.join("\n");
 }
 
+
+function zipCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function createStoredZip(files) {
+  const encoder = new TextEncoder(), localParts = [], centralParts = [];
+  let offset = 0, total = 0;
+  for (const file of files) {
+    const name = encoder.encode(file.name), bytes = file.bytes;
+    total += bytes.length;
+    if (total > 46 * 1024 * 1024) throw new Error("حجم المجلد أكبر من الحد الآمن لإرساله عبر Telegram.");
+    const crc = zipCrc32(bytes), local = new Uint8Array(30 + name.length + bytes.length), lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true); lv.setUint32(14, crc, true);
+    lv.setUint32(18, bytes.length, true); lv.setUint32(22, bytes.length, true); lv.setUint16(26, name.length, true);
+    local.set(name, 30); local.set(bytes, 30 + name.length); localParts.push(local);
+    const central = new Uint8Array(46 + name.length), cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x0800, true);
+    cv.setUint32(16, crc, true); cv.setUint32(20, bytes.length, true); cv.setUint32(24, bytes.length, true);
+    cv.setUint16(28, name.length, true); cv.setUint32(42, offset, true); central.set(name, 46); centralParts.push(central);
+    offset += local.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0), end = new Uint8Array(22), ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true); ev.setUint32(16, offset, true);
+  const output = new Uint8Array(offset + centralSize + 22); let cursor = 0;
+  for (const part of localParts) { output.set(part, cursor); cursor += part.length; }
+  for (const part of centralParts) { output.set(part, cursor); cursor += part.length; }
+  output.set(end, cursor); return output;
+}
+async function collectDriveFolder(env, account, folderId, prefix, output, budget) {
+  const data = await callInternalApi(handleDriveAPI, env, "/api/drive/list", "GET", { account, q: `'${folderId}' in parents and trashed = false`, pageSize: 100 });
+  for (const item of data.files || []) {
+    if (output.length >= 200) throw new Error("المجلد يحتوي على أكثر من 200 ملف.");
+    const relative = [prefix, safeString(item.name, 180)].filter(Boolean).join("/");
+    if (item.mimeType === "application/vnd.google-apps.folder") { await collectDriveFolder(env, account, item.id, relative, output, budget); continue; }
+    const native = {
+      "application/vnd.google-apps.document": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"],
+      "application/vnd.google-apps.spreadsheet": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"],
+      "application/vnd.google-apps.presentation": ["application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"],
+      "application/vnd.google-apps.drawing": ["application/pdf", ".pdf"]
+    }[item.mimeType];
+    const token = await getGoogleDriveAccessToken(env, account);
+    const url = native ? `${GOOGLE_API}/files/${encodeURIComponent(item.id)}/export?mimeType=${encodeURIComponent(native[0])}` : `${GOOGLE_API}/files/${encodeURIComponent(item.id)}?alt=media`;
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error(`تعذر تنزيل ${item.name} من Drive (${response.status}).`);
+    const bytes = new Uint8Array(await response.arrayBuffer()); budget.size += bytes.length;
+    if (budget.size > 46 * 1024 * 1024) throw new Error("حجم المجلد أكبر من الحد الآمن للتحميل.");
+    output.push({ name: native && !/\\.[a-z0-9]{1,8}$/i.test(relative) ? relative + native[1] : relative, bytes });
+  }
+}
+async function collectGitHubFolder(env, session, folderPath, prefix, output, budget) {
+  const entries = await callInternalApi(handleGitHubAPI, env, "/api/github/contents", "GET", { owner: session.owner, repo: session.repo, path: folderPath, ref: session.ref });
+  for (const item of entries || []) {
+    if (output.length >= 200) throw new Error("المجلد يحتوي على أكثر من 200 ملف.");
+    const relative = [prefix, safeString(item.name, 180)].filter(Boolean).join("/");
+    if (item.type === "dir") { await collectGitHubFolder(env, session, item.path, relative, output, budget); continue; }
+    const token = hasGitHubAppConfig(env) ? await githubInstallationToken(env) : env.GITHUB_TOKEN;
+    const rawUrl = `${GITHUB_API}/repos/${encodeURIComponent(session.owner)}/${encodeURIComponent(session.repo)}/contents/${encodePath(item.path)}${session.ref ? `?ref=${encodeURIComponent(session.ref)}` : ""}`;
+    const response = await fetch(rawUrl, { headers: { Accept: "application/vnd.github.raw", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "Ahmed-AI" } });
+    if (!response.ok) throw new Error(`تعذر تنزيل ${item.path} من GitHub (${response.status}).`);
+    const bytes = new Uint8Array(await response.arrayBuffer()); budget.size += bytes.length;
+    if (budget.size > 46 * 1024 * 1024) throw new Error("حجم المجلد أكبر من الحد الآمن للتحميل.");
+    output.push({ name: relative, bytes });
+  }
+}
+async function downloadBrowseZip(env, chatId, session) {
+  const files = [], budget = { size: 0 };
+  if (session.provider === "drive") await collectDriveFolder(env, session.account, session.path || "root", session.currentName || "Google-Drive", files, budget);
+  else await collectGitHubFolder(env, session, session.path || "", session.currentName || session.repo, files, budget);
+  if (!files.length) throw new Error("المجلد فاضي.");
+  const zip = createStoredZip(files);
+  const archiveName = `${safeString(session.currentName || session.repo || "folder", 80).replace(/[^a-zA-Z0-9._-]+/g, "_")}.zip`;
+  await sendTelegram(env, chatId, `📦 جهزت المجلد كملف ZIP\n📁 ${session.currentName || session.title}\n📄 عدد الملفات: ${files.length}`);
+  await sendTelegramDocument(env, chatId, archiveName, zip);
+}
+
 function renderBrowseKeyboard(session) {
   const items = (session.items || []).slice(0, 18);
   const rows = items.map((item, index) => [{
@@ -1332,13 +1410,16 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     }
     session.path = previous.path;
     session.items = previous.items;
+    session.currentName = previous.currentName;
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
     await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
     return true;
   }
   if (data === "browse:zip") {
-    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "تجهيز ZIP للمجلد غير متاح في هذا الإصدار بعد.", show_alert: true });
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "جاري تجهيز ZIP..." });
+    try { await downloadBrowseZip(env, chatId, session); }
+    catch (error) { await sendTelegram(env, chatId, `❌ مقدرتش أجهز ZIP: ${safeString(errorMessage(error), 350)}`); }
     return true;
   }
   if (data.startsWith("browse:item:")) {
@@ -1353,8 +1434,9 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
       ? item.id
       : (item.path || [session.path, item.name].filter(Boolean).join("/"));
     if (folder) {
-      session.stack.push({ path: session.path, items: session.items });
+      session.stack.push({ path: session.path, items: session.items, currentName: session.currentName });
       session.path = itemPath;
+      session.currentName = item.name || item.path || "folder";
       session.items = await fetchBrowseChildren(env, session, itemPath);
       await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
       await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
