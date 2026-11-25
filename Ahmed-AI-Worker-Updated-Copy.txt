@@ -47,7 +47,7 @@ const SYSTEM_PROMPT = [
   "عند التعريف بنفسك أو شرح قدراتك، قدم تعريفًا مختصرًا وجذابًا ومنظمًا، واستخدم رموزًا بسيطة عند فائدتها. لا تسرد كل الأدوات إلا لو المستخدم سأل عن إمكانياتك. خلي العامية المصرية طبيعية وقريبة.",
   "لو مش متأكد من معلومة قول كده بصراحة ومتخترعش.",
   "لا تطلب كلمات مرور أو بيانات بنكية أو أي معلومات حساسة.",
-  "لديك أدوات فعلية لـ Google Drive وGitHub والتذكيرات والمهام والذاكرة. استخدم الأدوات عند طلب تنفيذ أو استعلام متعلق بها، ولا تدّع تنفيذ شيء دون نتيجة أداة.",
+  "عند طلب خريطة GitHub أو مستودعات GitHub استخدم github_repos حصريًا ولا تستخدم task_list؛ فـ task_list للمهام الداخلية فقط. عند اختيار خريطة عملية أو نظرية أكمل جلسة التصفح الحالية. لديك أدوات فعلية لـ Google Drive وGitHub والتذكيرات والمهام والذاكرة. استخدم الأدوات عند طلب تنفيذ أو استعلام متعلق بها، ولا تدّع تنفيذ شيء دون نتيجة أداة.",
   "لا تخترع أسماء ملفات أو مستودعات أو نتائج. إذا كانت البيانات غير كافية فاسأل عن الناقص. عند طلب المستخدم ملفًا من GitHub، أرسل الملف نفسه كمرفق Telegram مع الحفاظ على اسمه وامتداده؛ لا تعرض محتواه في رسالة إلا إذا طلب المستخدم صراحةً عرض سطور أو جزء منه. عند طلب سطور محددة استخدم نطاق السطور المطلوب فقط.",
   "ابحث في الذاكرة المحفوظة عندما تحتاج تفضيلات أو معلومات سابقة تخص المستخدم، ولا تحفظ شيئاً إلا إذا طلب المستخدم ذلك صراحة.",
   "التأكيد على عمليات التعديل والإنشاء والحذف يتم حصرياً من طبقة التنفيذ البرمجية: استدعِ الأداة المطلوبة مباشرة دون أن تسأل المستخدم مسبقاً هل تريد التنفيذ أو تطلب منه تأكيداً بنفسك. إذا كانت العملية تحتاج موافقة، ستعيد لك طبقة التنفيذ طلب تأكيد واحداً؛ اعرضه للمستخدم كما هو بمعنى واضح وانتظر رده. بعد موافقة المستخدم، النظام ينفذ العملية مباشرة ولا تطلب موافقة ثانية على نفس العملية. افهم الموافقة أو الإلغاء من الردود الطبيعية الواضحة مثل أكد، أيوه، موافق، كمل، نفّذ، اعملها، يلا، تمام، ماشي، وكذلك إلغاء، خلاص بلاش، متنفذش، وقف. لو الرد محتمل أو فيه تردد مثل تمام بس استنى، لا تنفذ ولا تلغِ العملية واطلب توضيحاً.",
@@ -854,7 +854,12 @@ async function executeDriveTool(env, name, a, chatId) {
 
 async function executeGitHubTool(env, name, a, chatId) {
   if (name === "github_user") return await callInternalApi(handleGitHubAPI, env, "/api/github/user");
-  if (name === "github_repos") return await callInternalApi(handleGitHubAPI, env, "/api/github/repos", "GET", { page: a.page || 1, per_page: a.per_page || 30 });
+  if (name === "github_repos") {
+    const data = await callInternalApi(handleGitHubAPI, env, "/api/github/repos", "GET", { page: a.page || 1, per_page: a.per_page || 30 });
+    const repositories = data.repositories || [];
+    await startBrowseSession(env, chatId, { provider: "repos", title: "GitHub", path: "", stack: [], items: repositories });
+    return { browse_prompt_sent: true, count: repositories.length };
+  }
   if (name === "github_contents") {
     const owner = validateId(a.owner, "owner");
     const repo = validateId(a.repo, "repo");
@@ -1257,9 +1262,9 @@ function browseItemLabel(item, index, provider) {
 }
 
 function sessionItemIsFolder(item, provider) {
-  return provider === "drive"
-    ? item.mimeType === "application/vnd.google-apps.folder"
-    : item.type === "dir";
+  if (provider === "drive") return item.mimeType === "application/vnd.google-apps.folder";
+  if (provider === "repos") return true;
+  return item.type === "dir";
 }
 
 function renderBrowseTree(session) {
@@ -1408,9 +1413,11 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
       await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "أنت بالفعل في المجلد الرئيسي." });
       return true;
     }
+    session.provider = previous.provider || session.provider;
     session.path = previous.path;
     session.items = previous.items;
     session.currentName = previous.currentName;
+    if (session.provider === "repos") { delete session.owner; delete session.repo; delete session.ref; session.title = "GitHub"; }
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
     await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
@@ -1427,6 +1434,19 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     const item = session.items?.[index];
     if (!item) {
       await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "العنصر لم يعد موجودًا." });
+      return true;
+    }
+    if (session.provider === "repos") {
+      const fullName = item.full_name || ((item.owner && item.owner.login ? item.owner.login : "") + "/" + (item.name || ""));
+      const parts = fullName.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) { await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "بيانات المستودع غير مكتملة." }); return true; }
+      session.stack.push({ provider: "repos", path: session.path, items: session.items, currentName: session.currentName });
+      session.provider = "github"; session.owner = parts[0]; session.repo = parts[1]; session.ref = item.default_branch || "main";
+      session.title = fullName; session.path = "";
+      session.items = await fetchBrowseChildren(env, session, "");
+      await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+      await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
+      await editBrowseMessage(env, chatId, messageId, "📂 <b>" + escapeTelegramHtml(fullName) + "</b>\\nاختار مجلد أو ملف:", renderBrowseKeyboard(session));
       return true;
     }
     const folder = sessionItemIsFolder(item, session.provider);
