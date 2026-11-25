@@ -858,7 +858,7 @@ async function executeDriveTool(env, name, a, chatId) {
       const mime = String(metadata?.mimeType || "");
       const textLike = mime.startsWith("text/") || /json|javascript|xml|yaml|csv|x-sh|sql|markdown/i.test(mime) || /\.(txt|md|js|mjs|cjs|json|html|css|xml|csv|ya?ml|py|java|c|cpp|h|hpp|sql|sh)$/i.test(fileName);
       if (!textLike || nativeExport) throw new Error("عرض السطور متاح للملفات النصية فقط. الملف ده لازم يتبعت كمرفق.");
-      const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      const content = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bytes);
       const lines = content.split(/\r?\n/);
       const start = Math.max(1, Number(a.start_line) || 1);
       const end = Math.min(lines.length, Number(a.end_line) || start + 79);
@@ -1335,11 +1335,13 @@ function browseMiniAppButton(env) {
     : null;
 }
 function renderBrowseTheoryKeyboard(env, nodes = [], hasParent = false) {
+  /** @type {Array<Array<{text: string, callback_data?: string, web_app?: {url: string}}>>} */
   const rows = (nodes || []).map((node, index) => [{
     text: (node.folder ? "📁 " : browseTelegramIcon(node.item, node.provider) + " ") + safeString(node.name, 52),
     callback_data: "browse:theory:item:" + index
   }]);
   if (hasParent) rows.push([{ text: "⬆️ المجلد السابق", callback_data: "browse:theory:up" }]);
+  /** @type {Array<{text: string, callback_data?: string, web_app?: {url: string}}>} */
   const footer = [];
   const miniApp = browseMiniAppButton(env);
   if (miniApp) footer.push(miniApp);
@@ -1702,9 +1704,11 @@ async function downloadBrowseZip(env, chatId, session) {
 
 function renderBrowseKeyboard(session, env) {
   const items = (session.items || []).slice(0, 18);
+  /** @type {Array<Array<{text: string, callback_data?: string, web_app?: {url: string}}>>} */
   const rows = items.map((item, index) => [{ text: browseItemLabel(item, index, session.provider), callback_data: `browse:item:${index}` }]);
   if (session.stack && session.stack.length) rows.push([{ text: "↩️ رجوع للمجلد السابق", callback_data: "browse:back" }]);
   if (session.provider !== "repos") rows.push([{ text: "📦 تحميل ZIP", callback_data: "browse:zip" }]);
+  /** @type {Array<{text: string, callback_data?: string, web_app?: {url: string}}>} */
   const controls = [{ text: "🌳 النظرية", callback_data: "browse:theory" }];
   const miniApp = browseMiniAppButton(env);
   if (miniApp) controls.push(miniApp);
