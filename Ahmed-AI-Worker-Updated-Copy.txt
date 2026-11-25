@@ -767,7 +767,7 @@ async function executeGeminiTool(env, chatId, name, args, confirmed) {
 
   const a = args || {};
   if (name.startsWith("drive_")) return await executeDriveTool(env, name, a, chatId);
-  if (name.startsWith("github_")) return await executeGitHubTool(env, name, a);
+  if (name.startsWith("github_")) return await executeGitHubTool(env, name, a, chatId);
   if (name.startsWith("reminder_")) return await executeReminderTool(env, name, a, chatId);
   if (name.startsWith("task_")) return await executeTaskTool(env, name, a);
   if (name.startsWith("memory_")) return await executeMemoryTool(env, chatId, name, a);
@@ -852,7 +852,7 @@ async function executeDriveTool(env, name, a, chatId) {
   throw new Error("Unknown Drive tool");
 }
 
-async function executeGitHubTool(env, name, a) {
+async function executeGitHubTool(env, name, a, chatId) {
   if (name === "github_user") return await callInternalApi(handleGitHubAPI, env, "/api/github/user");
   if (name === "github_repos") return await callInternalApi(handleGitHubAPI, env, "/api/github/repos", "GET", { page: a.page || 1, per_page: a.per_page || 30 });
   if (name === "github_contents") {
