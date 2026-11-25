@@ -1191,7 +1191,9 @@ function escapeTelegramHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function markdownToTelegramHtml(value) {
@@ -1272,7 +1274,8 @@ async function sendTelegram(env, chatId, messageText, options = {}) {
 async function verifyTelegramWebAppInitData(initData, botToken) {
   if (typeof initData !== "string" || !initData || !botToken) return null;
   const p = new URLSearchParams(initData), hash = p.get("hash"), authDate = Number(p.get("auth_date"));
-  if (!hash || !/^[a-f0-9]{64}$/i.test(hash) || !Number.isFinite(authDate) || Math.abs(Date.now()/1000-authDate)>86400) return null;
+  const currentTime = Date.now() / 1000;
+  if (!hash || !/^[a-f0-9]{64}$/i.test(hash) || !Number.isFinite(authDate) || authDate > currentTime + 60 || currentTime - authDate > 86400) return null;
   const check = [...p.entries()].filter(([k])=>k!=="hash").sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>k+"="+v).join("\n");
   const enc=new TextEncoder(), k=await crypto.subtle.importKey("raw",enc.encode("WebAppData"),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
   const secret=await crypto.subtle.sign("HMAC",k,enc.encode(botToken));
