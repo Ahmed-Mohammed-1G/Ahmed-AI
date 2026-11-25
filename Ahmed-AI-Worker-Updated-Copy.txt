@@ -1833,30 +1833,29 @@ async function handleGitHubWebhook(request, env) {
     return textResponse("Invalid JSON", 400);
   }
 
-  const key = `github:webhook:delivery:${delivery}`;
-  const alreadySeen = await env.OAUTH_STORE.get(key);
-  if (alreadySeen) return jsonResponse({ ok: true, duplicate: true });
-
+  // D1 UNIQUE constraint makes deduplication atomic even when GitHub retries
+  // the same push concurrently (KV read-then-write is not atomic).
   const repoName = payload.repository?.full_name || payload.repository?.name || "unknown";
   const pushIdentity = [repoName, payload.ref || "", payload.after || ""].join(":");
-  const pushKey = payload.after
-    ? `github:webhook:push:${await sha256Hex(pushIdentity)}`
-    : null;
-  if (pushKey && await env.OAUTH_STORE.get(pushKey)) {
-    await env.OAUTH_STORE.put(key, "duplicate", { expirationTtl: 30 * 24 * 60 * 60 });
-    return jsonResponse({ ok: true, duplicate: true });
+  const pushKey = payload.after ? await sha256Hex(pushIdentity) : delivery;
+  try {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS github_webhook_deliveries (event_key TEXT PRIMARY KEY, created_at TEXT NOT NULL)").run();
+    const claim = await env.DB.prepare(
+      "INSERT OR IGNORE INTO github_webhook_deliveries (event_key, created_at) VALUES (?, ?)"
+    ).bind(pushKey, new Date().toISOString()).run();
+    if (!claim.meta || claim.meta.changes !== 1) {
+      return jsonResponse({ ok: true, duplicate: true });
+    }
+  } catch (error) {
+    console.error("GitHub webhook deduplication failed:", errorMessage(error));
+    return textResponse("Webhook deduplication unavailable", 503);
   }
-
-  await env.OAUTH_STORE.put(key, "sending", { expirationTtl: 30 * 24 * 60 * 60 });
-  if (pushKey) await env.OAUTH_STORE.put(pushKey, "sending", { expirationTtl: 30 * 24 * 60 * 60 });
   try {
     await sendTelegram(env, env.ALLOWED_USER_ID, formatGitHubPushMessage(payload));
     await env.OAUTH_STORE.put(key, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
     if (pushKey) await env.OAUTH_STORE.put(pushKey, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
     return jsonResponse({ ok: true, notified: true });
   } catch (error) {
-    await env.OAUTH_STORE.delete(key);
-    if (pushKey) await env.OAUTH_STORE.delete(pushKey);
     console.error("GitHub webhook Telegram delivery failed:", errorMessage(error));
     return textResponse("Notification delivery failed", 502);
   }
