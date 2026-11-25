@@ -1521,10 +1521,8 @@ async function handleBrowseTheoryCallback(env, query, chatId, messageId, data, s
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     const fullPath = selected.repository ? selected.name : [selected.title, selected.path].filter(Boolean).join("/");
     const detailText = (selected.folder ? "📁 <b>تفاصيل المجلد</b>" : "📄 <b>تفاصيل الملف</b>") +
-      "
-<b>الاسم:</b> " + escapeTelegramHtml(selected.name) +
-      "
-<b>المسار:</b> <code>" + escapeTelegramHtml(fullPath || selected.name) + "</code>";
+      "\n<b>الاسم:</b> " + escapeTelegramHtml(selected.name) +
+      "\n<b>المسار:</b> <code>" + escapeTelegramHtml(fullPath || selected.name) + "</code>";
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
     await editBrowseMessage(env, chatId, messageId, detailText, {
       inline_keyboard: [[
