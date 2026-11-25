@@ -1339,11 +1339,11 @@ function browseMiniAppButton(env) {
 }
 function renderBrowseTheoryKeyboard(env) {
   /** @type {Array<Array<{text: string, callback_data?: string, web_app?: {url: string}}>>} */
-  const footer = [];
+  const rows = [];
   const miniApp = browseMiniAppButton(env);
-  if (miniApp) footer.push(miniApp);
-  footer.push({ text: "📱 العملية", callback_data: "browse:practical" });
-  return { inline_keyboard: [footer] };
+  if (miniApp) rows.push([miniApp]);
+  rows.push([{ text: "📱 العملية", callback_data: "browse:practical" }]);
+  return { inline_keyboard: rows };
 }
 async function startBrowseSession(env, chatId, session) {
   const key = `browse:${String(chatId)}`;
@@ -1386,6 +1386,29 @@ function sessionItemIsFolder(item, provider) {
   if (provider === "drive") return item.mimeType === "application/vnd.google-apps.folder";
   if (provider === "repos") return true;
   return item.type === "dir";
+}
+
+function browseTheoryItemUrl(node) {
+  const item = node.item || {};
+
+  if (node.provider === "drive") {
+    if (item.webViewLink) return item.webViewLink;
+    const id = item.id || node.path;
+    if (!id) return null;
+    return node.folder
+      ? "https://drive.google.com/drive/folders/" + encodeURIComponent(id)
+      : "https://drive.google.com/file/d/" + encodeURIComponent(id) + "/view";
+  }
+
+  if (node.provider === "github" && node.owner && node.repo) {
+    const base = "https://github.com/" + encodeURIComponent(node.owner) + "/" + encodeURIComponent(node.repo);
+    if (node.repository) return item.html_url || base;
+    const ref = encodeURIComponent(node.ref || "HEAD");
+    const itemPath = node.path ? "/" + encodePath(node.path) : "";
+    return base + (node.folder ? "/tree/" : "/blob/") + ref + itemPath;
+  }
+
+  return item.html_url || item.url || null;
 }
 
 async function buildBrowseTheoryView(env, session) {
