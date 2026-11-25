@@ -1274,39 +1274,41 @@ function browsePathTitle(session) {
 }
 
 function browseFileIcon(item, provider) {
-  if (sessionItemIsFolder(item, provider)) return provider === "repos" ? "📦" : "🗂️";
+  if (sessionItemIsFolder(item, provider)) return provider === "repos" ? "🧊" : "🗂️";
   const name = String(item.name || item.path || "").toLowerCase();
   const mime = String(item.mimeType || item.type || "").toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop() : "";
-  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|ico|heic)$/.test(ext)) return "🖼️";
-  if (mime.startsWith("video/") || /^(mp4|mkv|mov|avi|webm|m4v|3gp)$/.test(ext)) return "🎬";
-  if (mime.startsWith("audio/") || /^(mp3|wav|ogg|m4a|flac|aac)$/.test(ext)) return "🎵";
-  if (ext === "pdf" || mime === "application/pdf") return "📕";
-  if (/^(doc|docx|odt|rtf)$/.test(ext)) return "📝";
-  if (/^(xls|xlsx|csv|ods)$/.test(ext)) return "📊";
-  if (/^(ppt|pptx|odp)$/.test(ext)) return "📽️";
-  if (/^(zip|rar|7z|tar|gz|bz2)$/.test(ext)) return "🗜️";
-  if (/^(js|jsx|mjs|cjs)$/.test(ext)) return "🟨";
-  if (/^(ts|tsx)$/.test(ext)) return "🔷";
+  // A cohesive, modern emoji palette: visual media, documents, data and language identities.
+  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|ico|heic|avif)$/.test(ext)) return "🌄";
+  if (mime.startsWith("video/") || /^(mp4|mkv|mov|avi|webm|m4v|3gp|mpeg|mpg)$/.test(ext)) return "📽️";
+  if (mime.startsWith("audio/") || /^(mp3|wav|ogg|m4a|flac|aac|opus|wma)$/.test(ext)) return "🎧";
+  if (ext === "pdf" || mime === "application/pdf") return "🟥";
+  if (/^(doc|docx|odt|rtf)$/.test(ext)) return "📘";
+  if (/^(xls|xlsx|csv|ods)$/.test(ext)) return "🟩";
+  if (/^(ppt|pptx|odp)$/.test(ext)) return "🟧";
+  if (/^(zip|rar|7z|tar|gz|bz2|xz)$/.test(ext)) return "🧰";
+  if (/^(js|jsx|mjs|cjs)$/.test(ext)) return "⚡";
+  if (/^(ts|tsx)$/.test(ext)) return "💠";
   if (ext === "py") return "🐍";
   if (ext === "java") return "☕";
-  if (/^(c|h|cpp|cc|cxx|hpp|hh)$/.test(ext)) return "⚙️";
+  if (/^(c|h|cpp|cc|cxx|hpp|hh)$/.test(ext)) return "🛠️";
   if (ext === "cs") return "🟪";
-  if (/^(html|htm|xml|xhtml)$/.test(ext)) return "🌐";
-  if (/^(css|scss|sass|less)$/.test(ext)) return "🎨";
+  if (/^(html|htm|xml|xhtml)$/.test(ext)) return "🕸️";
+  if (/^(css|scss|sass|less)$/.test(ext)) return "🪄";
   if (ext === "php") return "🐘";
-  if (ext === "go") return "🐹";
+  if (ext === "go") return "🚀";
   if (ext === "rs") return "🦀";
   if (ext === "rb") return "💎";
-  if (ext === "swift") return "🕊️";
-  if (/^(kt|kts)$/.test(ext)) return "🟣";
-  if (/^(sql|db|sqlite)$/.test(ext)) return "🗃️";
-  if (/^(json|ya?ml|toml|ini|env)$/.test(ext)) return "🔧";
-  if (/^(md|txt|log|rst)$/.test(ext)) return "📄";
-  if (/^(sh|bat|ps1)$/.test(ext)) return "⌨️";
+  if (ext === "swift") return "🪽";
+  if (/^(kt|kts)$/.test(ext)) return "🪻";
+  if (/^(sql|db|sqlite)$/.test(ext)) return "🗄️";
+  if (/^(json|ya?ml|toml|ini|env)$/.test(ext)) return "🧩";
+  if (/^(md|txt|log|rst)$/.test(ext)) return "📜";
+  if (/^(sh|bat|ps1)$/.test(ext)) return "⌘";
+  if (/^(exe|msi|apk|app|dmg)$/.test(ext)) return "📦";
+  if (/^(ttf|otf|woff2?)$/.test(ext)) return "🔤";
   return "📃";
 }
-
 function browseItemLabel(item, index, provider) {
   const icon = browseFileIcon(item, provider);
   const name = safeString(item.name || item.path || "بدون اسم", 48);
