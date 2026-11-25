@@ -334,6 +334,16 @@ async function handleTelegram(request, env) {
     return textResponse("ok");
   }
 
+  const browseChoice = msg.text.trim().toLowerCase().replace(/[أإآ]/g, "ا");
+  if (env.OAUTH_STORE && /^(خريطة عملية|عملي|عملية|practical)$/.test(browseChoice)) {
+    const session = await env.OAUTH_STORE.get("browse:" + String(msg.chat.id), "json");
+    if (session) { await sendTelegram(env, msg.chat.id, "📱 **الخريطة العملية · " + session.title + "**\\nاختار مستودعًا أو مجلدًا أو ملفًا:", { reply_markup: renderBrowseKeyboard(session) }); return textResponse("ok"); }
+  }
+  if (env.OAUTH_STORE && /^(خريطة نظرية|نظري|نظرية|theory)$/.test(browseChoice)) {
+    const session = await env.OAUTH_STORE.get("browse:" + String(msg.chat.id), "json");
+    if (session) { await sendTelegram(env, msg.chat.id, renderBrowseTree(session)); return textResponse("ok"); }
+  }
+
   const command = msg.text.trim()
     .split(/\s+/, 1)[0]
     .split("@", 1)[0]
