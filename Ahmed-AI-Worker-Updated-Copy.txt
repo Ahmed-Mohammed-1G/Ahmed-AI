@@ -320,17 +320,15 @@ async function handleTelegram(request, env) {
     return textResponse("Bad request", 400);
   }
 
-  const msg = update.message;
+  if (!Number.isSafeInteger(update.update_id)) return textResponse("ok");
 
-  if (
-    !Number.isSafeInteger(update.update_id) ||
-    !msg ||
-    typeof msg.text !== "string" ||
-    !msg.from ||
-    !msg.chat
-  ) {
+  if (update.callback_query) {
+    await handleTelegramCallback(env, update.callback_query);
     return textResponse("ok");
   }
+
+  const msg = update.message;
+  if (!msg || typeof msg.text !== "string" || !msg.from || !msg.chat) return textResponse("ok");
 
   if (String(msg.from.id) !== String(env.ALLOWED_USER_ID)) {
     return textResponse("ok");
@@ -647,12 +645,8 @@ async function callGemini(env, history, userText, chatId) {
       } catch (error) {
         result = { ok: false, error: errorMessage(error) };
       }
-      functionResponses.push({
-        functionResponse: {
-          name: call.name,
-          response: { result }
-        }
-      });
+      if (result?.file_sent) return "__FILE_SENT__";
+      functionResponses.push({ functionResponse: { name: call.name, response: { result } } });
     }
 
     contents.push({ role: "user", parts: functionResponses });
@@ -733,7 +727,7 @@ async function handlePendingToolConfirmation(env, chatId, userText) {
   if (decision === "ambiguous") {
     return {
       handled: true,
-      reply: "🟡 العملية مستنية تأكيدك.\n\nقول «أكد» أو «نفّذ» للتنفيذ، أو «إلغاء» للإلغاء. لو قصدك حاجة تانية وضّحلي."
+      reply: "🟡 العملية مستنية تأكيدك.\n\nاستخدم زري الموافقة أو الرفض أسفل الرسالة، أو اكتب قرارك."
     };
   }
 
@@ -836,7 +830,8 @@ async function executeDriveTool(env, name, a, chatId) {
       if (end < start) throw new Error("نطاق السطور غير صحيح.");
       return { excerpt: true, name: fileName, start_line: start, end_line: end, total_lines: lines.length, content: lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`).join("\n"), webViewLink: metadata?.webViewLink || null };
     }
-    await sendTelegramDocument(env, chatId, fileName, bytes, `ملف من Google Drive · الحساب ${account}`);
+    await sendTelegram(env, chatId, `📎 الملف جاهز للإرسال\n📄 ${fileName}\n☁️ Google Drive · الحساب ${account}`);
+    await sendTelegramDocument(env, chatId, fileName, bytes);
     return { file_sent: true, name: fileName, account, size: bytes.byteLength, webViewLink: metadata?.webViewLink || null };
   }
   if (name === "drive_create_folder") return await callInternalApi(handleDriveAPI, env, "/api/drive/create-folder", "POST", { account }, { name: safeString(a.name, 200), parentId: a.parentId || undefined });
@@ -892,7 +887,8 @@ async function executeGitHubTool(env, name, a, chatId) {
       }
       if (bytes.byteLength > 49 * 1024 * 1024) throw new Error("حجم الملف أكبر من الحد المدعوم للإرسال عبر Telegram.");
       const fileName = safeString(data.name || String(a.path).split("/").pop() || "github-file", 180).replace(/[\\/\0]/g, "_");
-      await sendTelegramDocument(env, chatId, fileName, bytes, `ملف من ${owner}/${repo}`);
+      await sendTelegram(env, chatId, `📎 الملف جاهز للإرسال\n📄 ${fileName}\n🐙 ${owner}/${repo}`);
+      await sendTelegramDocument(env, chatId, fileName, bytes);
       return { file_sent: true, name: fileName, repository: `${owner}/${repo}`, size: bytes.byteLength, html_url: data.html_url || null };
     }
 
@@ -1220,15 +1216,42 @@ async function telegramApiRequest(env, method, body, isForm = false) {
   return result;
 }
 
-async function sendTelegram(env, chatId, messageText) {
-  for (const chunk of splitTelegramText(messageText)) {
-    await telegramApiRequest(env, "sendMessage", {
-      chat_id: chatId,
-      text: markdownToTelegramHtml(chunk),
-      parse_mode: "HTML",
-      disable_web_page_preview: true
-    });
+async function sendTelegram(env, chatId, messageText, options = {}) {
+  const chunks = splitTelegramText(messageText);
+  for (let index = 0; index < chunks.length; index++) {
+    const body = { chat_id: chatId, text: markdownToTelegramHtml(chunks[index]), parse_mode: "HTML", disable_web_page_preview: true };
+    if (index === chunks.length - 1 && options.reply_markup) body.reply_markup = options.reply_markup;
+    await telegramApiRequest(env, "sendMessage", body);
   }
+}
+
+async function handleTelegramCallback(env, query) {
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
+  if (String(query.from?.id) !== String(env.ALLOWED_USER_ID) || !chatId || !messageId) {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "غير مصرح." });
+    return;
+  }
+  const choice = String(query.data || "").slice("confirm:".length);
+  if (!["yes", "no"].includes(choice) || !env.OAUTH_STORE) {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "الاختيار غير متاح." });
+    return;
+  }
+  const key = toolConfirmationKey(chatId);
+  const pending = await env.OAUTH_STORE.get(key, "json");
+  if (!pending) {
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "انتهت صلاحية التأكيد." });
+    await telegramApiRequest(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    return;
+  }
+  await env.OAUTH_STORE.delete(key);
+  await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: choice === "yes" ? "تمت الموافقة." : "تم الرفض." });
+  await telegramApiRequest(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+  if (choice === "no") { await sendTelegram(env, chatId, "🟡 تم رفض العملية. لم يتم تنفيذ أي تغيير."); return; }
+  try {
+    const result = await executeGeminiTool(env, chatId, pending.name, pending.args, true);
+    await sendTelegram(env, chatId, formatToolResult(pending.name, result, pending.args));
+  } catch (error) { await sendTelegram(env, chatId, formatToolFailure(pending.name, error)); }
 }
 
 async function sendTelegramDocument(env, chatId, fileName, bytes, caption = "") {
@@ -1270,11 +1293,12 @@ async function sendReply(env, taskId) {
   if (!task) return;
 
   try {
-    await sendTelegram(
-      env,
-      task.chat_id,
-      task.reply_text || "(رد فاضي)"
-    );
+    const pendingConfirmation = env.OAUTH_STORE ? await env.OAUTH_STORE.get(toolConfirmationKey(task.chat_id), "json") : null;
+    if (task.reply_text !== "__FILE_SENT__") {
+      await sendTelegram(env, task.chat_id, task.reply_text || "(رد فاضي)", pendingConfirmation ? {
+        reply_markup: { inline_keyboard: [[{ text: "✅ موافقة", callback_data: "confirm:yes" }, { text: "❌ رفض", callback_data: "confirm:no" }]] }
+      } : {});
+    }
 
     await env.DB.prepare(
       `UPDATE tasks
