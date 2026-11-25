@@ -344,11 +344,14 @@ async function handleTelegram(request, env) {
   const browseChoice = msg.text.trim().toLowerCase().replace(/[أإآ]/g, "ا");
   if (env.OAUTH_STORE && /^(خريطة عملية|عملي|عملية|practical)$/.test(browseChoice)) {
     const session = await env.OAUTH_STORE.get("browse:" + String(msg.chat.id), "json");
-    if (session) { await sendTelegram(env, msg.chat.id, "📱 **الخريطة العملية · " + session.title + "**\\nاختار مستودعًا أو مجلدًا أو ملفًا:", { reply_markup: renderBrowseKeyboard(session) }); return textResponse("ok"); }
+    if (session) { await sendTelegram(env, msg.chat.id, "📱 **الخريطة العملية · " + session.title + "**\\nاختار مستودعًا أو مجلدًا أو ملفًا:", { reply_markup: renderBrowseKeyboard(session, env) }); return textResponse("ok"); }
   }
   if (env.OAUTH_STORE && /^(خريطة نظرية|نظري|نظرية|theory)$/.test(browseChoice)) {
     const session = await env.OAUTH_STORE.get("browse:" + String(msg.chat.id), "json");
-    if (session) { await sendTelegram(env, msg.chat.id, renderBrowseTree(session)); return textResponse("ok"); }
+    if (session) {
+      await sendTelegram(env, msg.chat.id, await renderBrowseTree(env, session), { reply_markup: renderBrowseTheoryKeyboard(env) });
+      return textResponse("ok");
+    }
   }
 
   const normalizedMapRequest = msg.text.trim().toLowerCase().replace(/[أإآ]/g, "ا");
@@ -1324,14 +1327,26 @@ async function handleMiniAppAPI(request,env){
   }catch(e){console.error("Mini App browse failed:",errorMessage(e));return jsonResponse({error:safeString(errorMessage(e),250)||"تعذر تنفيذ العملية."},500)}
 }
 
+function browseMiniAppButton(env) {
+  return env.MINI_APP_URL && /^https:\/\//i.test(env.MINI_APP_URL)
+    ? { text: "🗂️ المستكشف", web_app: { url: env.MINI_APP_URL } }
+    : null;
+}
+function renderBrowseTheoryKeyboard(env) {
+  const row = [{ text: "📱 العملية", callback_data: "browse:practical" }];
+  const miniApp = browseMiniAppButton(env);
+  if (miniApp) row.push(miniApp);
+  return { inline_keyboard: [row] };
+}
 async function startBrowseSession(env, chatId, session) {
   const key = `browse:${String(chatId)}`;
   await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
+  const miniApp = browseMiniAppButton(env);
   await sendTelegram(env, chatId,
-    `🗂️ **استعراض ${session.title}**\n\nتحب تشوف الملفات بأي طريقة؟`,
+    `🗂️ **استعراض ${session.title}**\n\nاختار طريقة العرض:`,
     { reply_markup: { inline_keyboard: [
-      ...(env.MINI_APP_URL && /^https:\/\//i.test(env.MINI_APP_URL) ? [[{ text: "🚀 فتح مستكشف الملفات الاحترافي", web_app: { url: env.MINI_APP_URL } }]] : []),
-      [{ text: "🌳 نظرية", callback_data: "browse:theory" }, { text: "📱 قائمة Telegram", callback_data: "browse:practical" }]
+      ...(miniApp ? [[miniApp]] : []),
+      [{ text: "🌳 النظرية", callback_data: "browse:theory" }, { text: "📱 العملية", callback_data: "browse:practical" }]
     ] } }
   );
 }
@@ -1349,10 +1364,16 @@ function browseFileIcon(item, provider) {
   if(ext==="pdf")return "PDF";if(/^(doc|docx|odt|rtf)$/.test(ext))return "DOC";if(/^(xls|xlsx|csv|ods)$/.test(ext))return "XLS";if(/^(ppt|pptx|odp)$/.test(ext))return "PPT";if(/^(zip|rar|7z|tar|gz)$/.test(ext))return "ZIP";
   if(/^(js|jsx|mjs|cjs)$/.test(ext))return "JS";if(/^(ts|tsx)$/.test(ext))return "TS";if(ext==="py")return "PY";if(ext==="java")return "JAVA";if(/^(c|h|cpp|cc|cxx|hpp)$/.test(ext))return "C++";if(ext==="cs")return "C#";if(/^(html|htm|xhtml)$/.test(ext))return "HTML5";if(/^(css|scss|sass|less)$/.test(ext))return "CSS3";if(ext==="php")return "PHP";if(ext==="go")return "GO";if(ext==="rs")return "RUST";if(ext==="rb")return "RUBY";if(ext==="swift")return "SWIFT";if(/^(kt|kts)$/.test(ext))return "KT";if(/^(sql|db|sqlite)$/.test(ext))return "SQL";if(/^(json|ya?ml|toml|ini|env)$/.test(ext))return "DATA";if(/^(md|txt|log|rst)$/.test(ext))return "TEXT";if(/^(sh|bat|ps1)$/.test(ext))return "SHELL";return "FILE";
 }
+function browseTelegramIcon(item, provider) {
+  if (sessionItemIsFolder(item, provider)) return "📁";
+  const name = String(item.name || item.path || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  const icons = {js:"🟨",jsx:"🟨",mjs:"🟨",ts:"🔷",tsx:"🔷",html:"🌐",htm:"🌐",css:"🎨",scss:"🎨",py:"🐍",java:"☕",c:"⚙️",h:"⚙️",cpp:"⚙️",hpp:"⚙️",php:"🐘",go:"🔹",rs:"🦀",rb:"💎",swift:"🍎",kt:"🟣",json:"🔧",yml:"🔧",yaml:"🔧",toml:"🔧",xml:"🧩",md:"📝",txt:"📄",pdf:"📕",doc:"📘",docx:"📘",xls:"📗",xlsx:"📗",csv:"📊",ppt:"📙",pptx:"📙",png:"🖼️",jpg:"🖼️",jpeg:"🖼️",svg:"🖼️",gif:"🖼️",webp:"🖼️",mp4:"🎬",mov:"🎬",mp3:"🎵",wav:"🎵",zip:"🗜️",rar:"🗜️","7z":"🗜️",sh:"⌨️",bat:"⌨️",ps1:"⌨️",sql:"🗃️"};
+  return icons[ext] || "📄";
+}
 function browseItemLabel(item, index, provider) {
-  const icon = browseFileIcon(item, provider);
   const name = safeString(item.name || item.path || "بدون اسم", 48);
-  return "[" + icon + "] " + name;
+  return browseTelegramIcon(item, provider) + " " + name;
 }
 function sessionItemIsFolder(item, provider) {
   if (provider === "drive") return item.mimeType === "application/vnd.google-apps.folder";
@@ -1360,14 +1381,40 @@ function sessionItemIsFolder(item, provider) {
   return item.type === "dir";
 }
 
-function renderBrowseTree(session) {
+async function renderBrowseTree(env, session) {
   const lines = [`🌳 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>`];
-  for (const item of (session.items || []).slice(0, 80)) {
-    const folder = sessionItemIsFolder(item, session.provider);
-    lines.push(`├── ${folder ? "📁" : "📄"} ${escapeTelegramHtml(item.name || item.path || "بدون اسم")}`);
+  const maxEntries = 75;
+  let rendered = 0;
+  async function walk(items, parentPath, depth) {
+    const list = Array.isArray(items) ? items : [];
+    for (let i = 0; i < list.length && rendered < maxEntries; i++) {
+      const item = list[i], last = i === list.length - 1 || rendered === maxEntries - 1;
+      const branch = last ? "└── " : "├── ";
+      const name = escapeTelegramHtml(safeString(item.name || item.path || "بدون اسم", 90));
+      lines.push("  ".repeat(depth) + branch + browseTelegramIcon(item, session.provider) + " " + name);
+      rendered++;
+      if (sessionItemIsFolder(item, session.provider) && depth < 3 && rendered < maxEntries) {
+        const childPath = session.provider === "drive" ? item.id : (item.path || [parentPath, item.name].filter(Boolean).join("/"));
+        try {
+          const children = await fetchBrowseChildren(env, session, childPath);
+          if (children.length) await walk(children, childPath, depth + 1);
+          else lines.push("  ".repeat(depth + 1) + "└── <i>مجلد فارغ</i>");
+        } catch (error) {
+          lines.push("  ".repeat(depth + 1) + "└── <i>تعذر تحميل المحتويات</i>");
+        }
+      }
+    }
   }
-  if ((session.items || []).length > 80) lines.push(`… و${session.items.length - 80} عنصر إضافي`);
-  return lines.join("\n");
+  if (session.provider === "repos") {
+    for (const item of (session.items || []).slice(0, maxEntries)) {
+      lines.push("├── 📦 " + escapeTelegramHtml(safeString(item.full_name || item.name || "مستودع", 90)));
+      rendered++;
+    }
+  } else {
+    await walk(session.items || [], session.path || "", 0);
+  }
+  if (rendered >= maxEntries) lines.push("… <i>تم اختصار العرض؛ افتح المستكشف لرؤية بقية الملفات.</i>");
+  return lines.join("\n").slice(0, 3800);
 }
 
 
@@ -1448,19 +1495,15 @@ async function downloadBrowseZip(env, chatId, session) {
   await sendTelegramDocument(env, chatId, archiveName, zip);
 }
 
-function renderBrowseKeyboard(session) {
+function renderBrowseKeyboard(session, env) {
   const items = (session.items || []).slice(0, 18);
-  const rows = items.map((item, index) => [{
-    text: browseItemLabel(item, index, session.provider),
-    callback_data: `browse:item:${index}`
-  }]);
-  const controls = [
-    { text: "↩️ رجوع", callback_data: "browse:back" },
-    { text: "📦 تحميل ZIP", callback_data: "browse:zip" }
-  ];
-  if (session.provider === "repos" && (!session.stack || session.stack.length === 0)) {
-    controls.push({ text: "🌳 الخريطة النظرية", callback_data: "browse:theory" });
-  }
+  const rows = items.map((item, index) => [{ text: browseItemLabel(item, index, session.provider), callback_data: `browse:item:${index}` }]);
+  if (session.stack && session.stack.length) rows.push([{ text: "↩️ رجوع للمجلد السابق", callback_data: "browse:back" }]);
+  const controls = [];
+  if (session.provider !== "repos") controls.push({ text: "📦 تحميل ZIP", callback_data: "browse:zip" });
+  controls.push({ text: "🌳 النظرية", callback_data: "browse:theory" });
+  const miniApp = browseMiniAppButton(env);
+  if (miniApp) controls.push(miniApp);
   rows.push(controls);
   return { inline_keyboard: rows };
 }
@@ -1495,13 +1538,14 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     return true;
   }
   if (data === "browse:theory") {
-    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-    await editBrowseMessage(env, chatId, messageId, renderBrowseTree(session), { inline_keyboard: [[{ text: "📱 التحويل للخريطة العملية", callback_data: "browse:practical" }]] });
+    await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id, text: "بجهز الشجرة..." });
+    const tree = await renderBrowseTree(env, session);
+    await editBrowseMessage(env, chatId, messageId, tree, renderBrowseTheoryKeyboard(env));
     return true;
   }
   if (data === "browse:practical") {
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session, env));
     return true;
   }
   if (data === "browse:back") {
@@ -1517,7 +1561,7 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     if (session.provider === "repos") { delete session.owner; delete session.repo; delete session.ref; session.title = "GitHub"; }
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session, env));
     return true;
   }
   if (data === "browse:zip") {
@@ -1543,7 +1587,7 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
       session.items = await fetchBrowseChildren(env, session, "");
       await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
       await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-      await editBrowseMessage(env, chatId, messageId, "📂 <b>" + escapeTelegramHtml(fullName) + "</b>\\nاختار مجلد أو ملف:", renderBrowseKeyboard(session));
+      await editBrowseMessage(env, chatId, messageId, "📂 <b>" + escapeTelegramHtml(fullName) + "</b>\\nاختار مجلد أو ملف:", renderBrowseKeyboard(session, env));
       return true;
     }
     const folder = sessionItemIsFolder(item, session.provider);
@@ -1557,7 +1601,7 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
       session.items = await fetchBrowseChildren(env, session, itemPath);
       await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
       await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-      await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+      await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session, env));
       return true;
     }
     session.selected = {
@@ -1582,7 +1626,7 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     delete session.selected;
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
-    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session));
+    await editBrowseMessage(env, chatId, messageId, `📂 <b>${escapeTelegramHtml(browsePathTitle(session))}</b>\nاختار مجلد أو ملف:`, renderBrowseKeyboard(session, env));
     return true;
   }
   if (data === "file:open" || data === "file:download") {
