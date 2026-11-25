@@ -2103,7 +2103,10 @@ function formatGitHubPushMessage(payload) {
       lines.push(`${label}:`);
       for (const file of files.slice(0, 8)) lines.push(`- ${String(file).slice(0, 180)}`);
     }
-    if (commit.url) lines.push(`🔗 رابط Commit: ${commit.url}`);
+    const commitUrl = repo.html_url && commit.id
+      ? `${repo.html_url}/commit/${encodeURIComponent(commit.id)}`
+      : commit.html_url || commit.url;
+    if (commitUrl) lines.push(`🔗 رابط Commit: ${commitUrl}`);
   }
 
   if (commits.length > 15) lines.push(`يوجد ${commits.length - 15} Commit إضافي.`);
