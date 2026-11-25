@@ -1340,9 +1340,10 @@ function renderBrowseTheoryKeyboard(env, nodes = [], hasParent = false) {
     callback_data: "browse:theory:item:" + index
   }]);
   if (hasParent) rows.push([{ text: "⬆️ المجلد السابق", callback_data: "browse:theory:up" }]);
-  const footer = [{ text: "📱 العملية", callback_data: "browse:practical" }];
+  const footer = [];
   const miniApp = browseMiniAppButton(env);
   if (miniApp) footer.push(miniApp);
+  footer.push({ text: "📱 العملية", callback_data: "browse:practical" });
   rows.push(footer);
   return { inline_keyboard: rows };
 }
@@ -1420,12 +1421,13 @@ async function buildBrowseTheoryView(env, session) {
         name: itemName, path: itemPath, folder, item, provider: context.provider,
         owner: context.owner || null, repo: context.repo || null, ref: context.ref || null,
         account: context.account || null, title: context.title || state.title,
-        displayPath: itemDisplayPath
+        displayPath: itemDisplayPath,
+        lastModified: item.modifiedTime || item.updated_at || item.pushed_at || null
       });
       rendered++;
 
       if (folder && depth < 3 && rendered < maxEntries) {
-        const childPrefix = prefix + (last ? "    " : "│   ");
+        const childPrefix = prefix + (last ? "      " : "│     ");
         try {
           const childSession = { ...session, ...context, provider: context.provider };
           const children = await fetchBrowseChildren(env, childSession, itemPath);
@@ -1445,17 +1447,19 @@ async function buildBrowseTheoryView(env, session) {
       const fullName = repoItem.full_name || ((repoItem.owner && repoItem.owner.login ? repoItem.owner.login : "") + "/" + (repoItem.name || ""));
       const parts = String(fullName).split("/");
       if (parts.length !== 2 || !parts[0] || !parts[1]) continue;
-      const repoContext = { provider: "github", owner: parts[0], repo: parts[1], ref: repoItem.default_branch || "main", title: fullName };
-      lines.push((i === repos.length - 1 ? "└── " : "├── ") + "📦 " + escapeTelegramHtml(fullName));
+      const repoLabel = safeString(repoItem.name || parts[1], 90);
+      const repoContext = { provider: "github", owner: parts[0], repo: parts[1], ref: repoItem.default_branch || "main", title: repoLabel };
+      lines.push((i === repos.length - 1 ? "└── " : "├── ") + "📦 " + escapeTelegramHtml(repoLabel));
       nodes.push({
-        name: fullName, path: "", folder: true, item: repoItem, provider: "github",
-        owner: parts[0], repo: parts[1], ref: repoContext.ref, title: fullName, repository: true
+        name: repoLabel, path: "", folder: true, item: repoItem, provider: "github",
+        owner: parts[0], repo: parts[1], ref: repoContext.ref, title: repoLabel, repository: true,
+        displayPath: repoLabel, lastModified: repoItem.pushed_at || repoItem.updated_at || null
       });
       rendered++;
       if (rendered < maxEntries) {
         try {
           const children = await fetchBrowseChildren(env, { ...session, ...repoContext }, "");
-          if (children.length) await walk(children, repoContext, "", fullName, 0, "    ");
+          if (children.length) await walk(children, repoContext, "", repoLabel, 0, "      ");
         } catch (error) {
           lines.push("    └── <i>تعذر تحميل محتويات المستودع</i>");
         }
@@ -1483,6 +1487,30 @@ async function showBrowseTheory(env, chatId, messageId, session) {
   const view = await buildBrowseTheoryView(env, session);
   await env.OAUTH_STORE.put("browse:" + String(chatId), JSON.stringify(session), { expirationTtl: 1800 });
   await editBrowseMessage(env, chatId, messageId, view.text, view.markup);
+}
+
+async function getBrowseLastModified(env, selected) {
+  if (selected.lastModified) return selected.lastModified;
+  if (selected.provider === "drive") return selected.item?.modifiedTime || null;
+  if (selected.provider === "github" && selected.owner && selected.repo) {
+    try {
+      const params = new URLSearchParams({ path: selected.path || "", per_page: "1" });
+      const commits = await githubRequest(env,
+        "/repos/" + encodeURIComponent(selected.owner) + "/" +
+        encodeURIComponent(selected.repo) + "/commits?" + params.toString()
+      );
+      return commits?.[0]?.commit?.committer?.date || commits?.[0]?.commit?.author?.date || null;
+    } catch (error) {
+      console.error("Browse last-modified lookup failed:", errorMessage(error));
+    }
+  }
+  return null;
+}
+function formatBrowseLastModified(value) {
+  if (!value) return "غير متاح";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "غير متاح";
+  return date.toLocaleString("ar-EG", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 async function handleBrowseTheoryCallback(env, query, chatId, messageId, data, session, key) {
@@ -1522,15 +1550,17 @@ async function handleBrowseTheoryCallback(env, query, chatId, messageId, data, s
     state.selected = selected;
     await env.OAUTH_STORE.put(key, JSON.stringify(session), { expirationTtl: 1800 });
     const fullPath = selected.displayPath || selected.name;
+    const lastModified = await getBrowseLastModified(env, selected);
     const detailText = (selected.folder ? "📁 <b>تفاصيل المجلد</b>" : "📄 <b>تفاصيل الملف</b>") +
       "\n<b>الاسم:</b> " + escapeTelegramHtml(selected.name) +
-      "\n<b>المسار:</b> <code>" + escapeTelegramHtml(fullPath || selected.name) + "</code>";
+      "\n<b>المسار:</b> <code>" + escapeTelegramHtml(fullPath || selected.name) + "</code>" +
+      "\n<b>آخر تعديل:</b> " + escapeTelegramHtml(formatBrowseLastModified(lastModified));
     await telegramApiRequest(env, "answerCallbackQuery", { callback_query_id: query.id });
     await editBrowseMessage(env, chatId, messageId, detailText, {
       inline_keyboard: [[
-        { text: "⬇️ تحميل", callback_data: "browse:theory:detail:download" },
+        { text: "↩️ رجوع", callback_data: "browse:theory:detail:back" },
         { text: "🔗 فتح", callback_data: "browse:theory:detail:open" },
-        { text: "↩️ رجوع", callback_data: "browse:theory:detail:back" }
+        { text: "⬇️ تحميل", callback_data: "browse:theory:detail:download" }
       ]]
     });
     return true;
@@ -1674,9 +1704,8 @@ function renderBrowseKeyboard(session, env) {
   const items = (session.items || []).slice(0, 18);
   const rows = items.map((item, index) => [{ text: browseItemLabel(item, index, session.provider), callback_data: `browse:item:${index}` }]);
   if (session.stack && session.stack.length) rows.push([{ text: "↩️ رجوع للمجلد السابق", callback_data: "browse:back" }]);
-  const controls = [];
-  if (session.provider !== "repos") controls.push({ text: "📦 تحميل ZIP", callback_data: "browse:zip" });
-  controls.push({ text: "🌳 النظرية", callback_data: "browse:theory" });
+  if (session.provider !== "repos") rows.push([{ text: "📦 تحميل ZIP", callback_data: "browse:zip" }]);
+  const controls = [{ text: "🌳 النظرية", callback_data: "browse:theory" }];
   const miniApp = browseMiniAppButton(env);
   if (miniApp) controls.push(miniApp);
   rows.push(controls);
@@ -1792,9 +1821,9 @@ async function handleBrowseCallback(env, query, chatId, messageId, data) {
     await editBrowseMessage(env, chatId, messageId,
       `📄 <b>${escapeTelegramHtml(session.selected.name)}</b>\n\nاختار الإجراء المطلوب:`,
       { inline_keyboard: [[
+        { text: "↩️ رجوع", callback_data: "file:back" },
         { text: "🔗 فتح", callback_data: "file:open" },
-        { text: "⬇️ تحميل", callback_data: "file:download" },
-        { text: "↩️ رجوع", callback_data: "file:back" }
+        { text: "⬇️ تحميل", callback_data: "file:download" }
       ]] }
     );
     return true;
