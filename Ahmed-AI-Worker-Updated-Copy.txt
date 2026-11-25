@@ -1856,6 +1856,7 @@ async function handleGitHubWebhook(request, env) {
     if (pushKey) await env.OAUTH_STORE.put(pushKey, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
     return jsonResponse({ ok: true, notified: true });
   } catch (error) {
+    await env.DB.prepare("DELETE FROM github_webhook_deliveries WHERE event_key = ?").bind(pushKey).run();
     console.error("GitHub webhook Telegram delivery failed:", errorMessage(error));
     return textResponse("Notification delivery failed", 502);
   }
