@@ -2144,7 +2144,6 @@ async function handleGitHubWebhook(request, env) {
   }
   try {
     await sendTelegram(env, env.ALLOWED_USER_ID, formatGitHubPushMessage(payload));
-    await env.OAUTH_STORE.put(key, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
     if (pushKey) await env.OAUTH_STORE.put(pushKey, "sent", { expirationTtl: 30 * 24 * 60 * 60 });
     return jsonResponse({ ok: true, notified: true });
   } catch (error) {
