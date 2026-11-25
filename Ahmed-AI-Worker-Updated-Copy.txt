@@ -1250,8 +1250,8 @@ function browsePathTitle(session) {
   return session.path ? `${session.title}/${session.path}` : session.title;
 }
 
-function browseItemLabel(item, index) {
-  const folder = sessionItemIsFolder(item, item.__provider);
+function browseItemLabel(item, index, provider) {
+  const folder = sessionItemIsFolder(item, provider);
   const name = safeString(item.name || item.path || "بدون اسم", 48);
   return `${folder ? "📁" : "📄"} ${name}`;
 }
@@ -1353,7 +1353,7 @@ async function downloadBrowseZip(env, chatId, session) {
 function renderBrowseKeyboard(session) {
   const items = (session.items || []).slice(0, 18);
   const rows = items.map((item, index) => [{
-    text: browseItemLabel(item, index),
+    text: browseItemLabel(item, index, session.provider),
     callback_data: `browse:item:${index}`
   }]);
   rows.push([
